@@ -228,6 +228,23 @@ bool FAthleteBodyModel::Build(const FAthleteMorphology& In, FAthleteBodyModel& O
 	return true;
 }
 
+FVector FAthleteBodyModel::GetJointCenterM(EAthleteJoint Joint) const
+{
+	// Segment origins are cranial for the trunk and head, proximal for the limbs, and the heel
+	// for the foot, so where a joint sits depends on which endpoint the two segments share.
+	switch (Joint)
+	{
+	case EAthleteJoint::Lumbar:   return GetSegment(EAthleteSegment::LowerTrunk).OriginM;  // omphalion
+	case EAthleteJoint::Thoracic: return GetSegment(EAthleteSegment::MiddleTrunk).OriginM; // xiphion
+	case EAthleteJoint::Neck:     return GetSegment(EAthleteSegment::UpperTrunk).OriginM;  // cervicale
+	case EAthleteJoint::AnkleLeft:
+	case EAthleteJoint::AnkleRight:
+		return GetSegment(AthleteJoints::GetParentSegment(Joint)).EndM;                   // distal end of the shank
+	default:
+		return GetSegment(AthleteJoints::GetChildSegment(Joint)).OriginM;                 // proximal end of the limb segment
+	}
+}
+
 double FAthleteBodyModel::GetRegionMassKg(EAthleteBodyRegion Region) const
 {
 	double Mass = 0.0;

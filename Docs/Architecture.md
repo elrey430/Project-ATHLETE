@@ -13,7 +13,10 @@ AthleteTests (DeveloperTool; never shipped)
 ProjectAthlete (primary game module: AthleteLab scaffolding)
     |
     v
-AthleteBody (morphology, segment inertial model, strength, athlete Data Assets)
+AthletePhysics (articulated Chaos body: 16 rigid bodies, 15 anatomical joints)
+    |
+    v
+AthleteBody (morphology, segment inertial model, joints, mobility, strength, athlete Data Assets)
     |
     v
 AthleteCore (simulation foundation)
@@ -25,15 +28,15 @@ Unreal Engine (Core, CoreUObject, Engine, DeveloperSettings)
 | Module | Contains | Must never depend on |
 |---|---|---|
 | `AthleteCore` | units, deterministic RNG, telemetry, debug draw, simulation settings/seed | anything football, gameplay, or presentation |
-| `AthleteBody` | `FAthleteMorphology`, `FAthleteBodyModel`, `FAthleteStrengthProfile`, `UAthleteDefinition`, anthropometric reference data ([Milestone 1](Milestone1_AthleteBody.md)) | gameplay, football, presentation |
-| `ProjectAthlete` | `AAthleteLabGameMode`, `AAthleteLabPhysicsProbe`, `AAthleteLabBodyPreview` | presentation systems |
+| `AthleteBody` | `FAthleteMorphology`, `FAthleteBodyModel`, joints, `FAthleteMobilityProfile`, `FAthleteStrengthProfile`, `UAthleteDefinition`, anthropometric reference data ([Milestone 1](Milestone1_AthleteBody.md)). Pure data: no physics engine | gameplay, football, presentation, physics engine |
+| `AthletePhysics` | `UAthletePhysicalBodyComponent`, collision geometry, joint setup ([Milestone 2](Milestone2_PhysicalHumanoid.md)) | gameplay, football, presentation |
+| `ProjectAthlete` | `AAthleteLabGameMode`, `AAthleteLabPhysicsProbe`, `AAthleteLabBodyPreview`, `AAthleteLabRagdoll` | presentation systems |
 | `AthleteTests` | automation tests | (it's allowed to depend on everything it tests) |
 
 Planned modules are added **only when their milestone starts**. No empty placeholders:
 
 | Planned module | Milestone | Pipeline stage |
 |---|---|---|
-| (`AthleteBody` grows) | 2 | articulated physics body built from `FAthleteBodyModel` |
 | `AthleteMotor` | 3-4, 7 | balance, locomotion, contact motor skills (Physical Athlete Controller) |
 | `FootballBall` | 10 | ball physics |
 | `AthletePerception` / `AthleteCognition` | 11 | perception, belief state, decisions, intent |
@@ -81,9 +84,20 @@ Convert at the boundary with `AthleteUnits` (`Source/AthleteCore/Public/Units/At
 `Config/DefaultEngine.ini`: Chaos substepping at a maximum of 1/240 s, up to 8 substeps (1/30 s).
 Frames slower than 30 FPS slow simulated time down instead of taking an unstable large step.
 
-**Open decision (Milestones 2-3):** the active-ragdoll controller must apply joint torques inside
+**Open decision (Milestone 3):** the active-ragdoll controller must apply joint torques inside
 *every* physics step, not once per rendered frame. Options are per-substep callbacks or Chaos async
 physics with a truly fixed step (`bTickPhysicsAsync`). Decide with measurements when the controller exists.
+
+**Open decision (Milestone 6), top technical risk:** at 240 Hz, violent impacts make the solver create
+energy (up to ~330 J in a 1.5 m drop). About 1 kHz removes it, at roughly 2 ms per athlete-frame. See
+[Milestone 2 §8–9](Milestone2_PhysicalHumanoid.md).
+
+## Physics fidelity rules
+
+Chaos stabilization defaults that silently change physics are disabled on athlete bodies: inertia
+conditioning, joint mass conditioning, joint projection, the 3600°/s spin clamp, and the linear joint
+solver. Gyroscopic torque is enabled. Mass properties are written directly to Chaos. Any new physics
+object in ATHLETE should get the same audit.
 
 ## Telemetry and debug
 

@@ -5,9 +5,10 @@ A physics-first American football simulation in Unreal Engine 5.8.
 > The athlete does not play an animation that says what happened. The athlete attempts to
 > perform an action, and the simulation discovers what happens.
 
-**Current state:** Milestone 1 ([physical athlete definition](Docs/Milestone1_AthleteBody.md)).
-Athletes have computed bodies (segment masses, centers of mass, inertia) and strength data, but no
-physics body or movement yet. No football.
+**Current state:** Milestone 2 ([physical humanoid](Docs/Milestone2_PhysicalHumanoid.md)).
+Athletes have computed bodies ([Milestone 1](Docs/Milestone1_AthleteBody.md)) that now simulate as
+articulated Chaos rigid bodies with anatomical joints. They're passive: no muscles or balance yet, so a
+standing athlete collapses. No football.
 
 ## Athletes
 
@@ -15,6 +16,8 @@ Athletes are Data Assets in `Content/Athletes` (`DA_Athlete_Reference`, `DA_Athl
 Double-click one to edit height, mass, proportions, mass distribution, and strength. The **Fill
 Strength From General Population Baseline** button recomputes strength from age, height, and mass.
 The AthleteLab level shows each sample athlete's body next to the start line, updating live as you edit.
+Press Play (or Simulate) to watch three passive-body experiments 3 m past the start line: A dropped from
+1.5 m, the reference male collapsing, and B pushed in the chest. Each writes `Ragdoll_*.csv` telemetry.
 
 ## Requirements
 

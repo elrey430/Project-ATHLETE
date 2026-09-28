@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Anatomy/AthleteInertiaTensor.h"
+#include "Anatomy/AthleteJoints.h"
 #include "Anatomy/AthleteMorphology.h"
 #include "Anatomy/AthleteSegments.h"
 #include "Containers/StaticArray.h"
@@ -12,8 +13,9 @@
  * One rigid segment of the body in the reference pose.
  *
  * Positions are in the BODY FRAME, in meters: origin on the floor midway between the ankles,
- * +X forward, +Y right, +Z up. The reference pose is standing upright with arms hanging
- * straight down, palms facing inward, and feet flat and pointing forward.
+ * +X forward, +Y right, +Z up. The reference pose is the anatomical position: standing upright,
+ * arms hanging straight down, palms facing forward, feet flat and pointing forward. Joint ranges
+ * of motion (AAOS) are measured from this pose.
  */
 struct FAthleteBodySegment
 {
@@ -79,6 +81,9 @@ public:
 
 	/** Height of the hip joint centers above the floor. */
 	double GetHipJointHeightM() const { return GetSegment(EAthleteSegment::ThighLeft).OriginM.Z; }
+
+	/** Joint center in the reference pose (body frame, meters). */
+	FVector GetJointCenterM(EAthleteJoint Joint) const;
 
 	double GetRegionMassKg(EAthleteBodyRegion Region) const;
 

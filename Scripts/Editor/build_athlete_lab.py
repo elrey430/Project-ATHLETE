@@ -46,6 +46,16 @@ BODY_PREVIEWS = [
 BODY_PREVIEW_X_M = -3.0
 BODY_LABEL_HEIGHT_M = 2.2
 
+# Milestone 2 passive-body experiments, 3 m past the start line, facing the PlayerStart.
+RAGDOLL_CLASS = "/Script/ProjectAthlete.AthleteLabRagdoll"
+RAGDOLL_X_M = 3.0
+RAGDOLLS = [
+    # (athlete asset, scenario, lateral position m, label)
+    ("/Game/Athletes/DA_Athlete_A", "DROP", -2.0, "A: drop 1.5 m, 30 deg tilt"),
+    ("/Game/Athletes/DA_Athlete_Reference", "COLLAPSE", 0.0, "Reference: passive collapse"),
+    ("/Game/Athletes/DA_Athlete_B", "PUSH", 2.0, "B: 60 N*s chest push"),
+]
+
 
 def log(message):
     unreal.log("[BuildAthleteLab] " + message)
@@ -152,6 +162,23 @@ def main():
                      unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
         text.text_render.set_text(label)
         text.text_render.set_world_size(14.0)
+        text.text_render.set_horizontal_alignment(unreal.HorizTextAligment.EHTA_CENTER)
+
+    ragdoll_class = unreal.load_class(None, RAGDOLL_CLASS)
+    if ragdoll_class is None:
+        fail("Could not find " + RAGDOLL_CLASS + ". Is the C++ project compiled?")
+    for asset_path, scenario, y_m, label in RAGDOLLS:
+        athlete = load(asset_path)
+        ragdoll = spawn(ragdoll_class, "Ragdoll_" + athlete.get_name(), "Lab/Experiments",
+                        unreal.Vector(cm(RAGDOLL_X_M), cm(y_m), 0.0),
+                        unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        ragdoll.set_editor_property("athlete", athlete)
+        ragdoll.set_editor_property("scenario", getattr(unreal.AthleteLabRagdollScenario, scenario))
+        text = spawn(unreal.TextRenderActor, "Label_Ragdoll_" + athlete.get_name(), "Lab/Experiments",
+                     unreal.Vector(cm(RAGDOLL_X_M), cm(y_m), cm(BODY_LABEL_HEIGHT_M)),
+                     unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        text.text_render.set_text(label)
+        text.text_render.set_world_size(12.0)
         text.text_render.set_horizontal_alignment(unreal.HorizTextAligment.EHTA_CENTER)
 
     if not level_editor.save_current_level():

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Anatomy/AthleteMobility.h"
 #include "Anatomy/AthleteMorphology.h"
 #include "Capability/AthleteStrength.h"
 #include "Engine/DataAsset.h"
@@ -34,6 +35,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Capability")
 	FAthleteStrengthProfile Strength;
+
+	/** Joint ranges of motion (flexibility). Defaults to normal adult (AAOS) values. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Capability")
+	FAthleteMobilityProfile Mobility;
 
 	/** Computes the physical body. Returns false (and logs why) if the morphology is invalid. */
 	bool BuildBodyModel(FAthleteBodyModel& OutModel, FString* OutError = nullptr) const;

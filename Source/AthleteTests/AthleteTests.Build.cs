@@ -17,6 +17,7 @@ public class AthleteTests : ModuleRules
 			"Engine",
 			"AthleteCore",
 			"AthleteBody",
+			"AthletePhysics",
 			"ProjectAthlete",
 		});
 	}
