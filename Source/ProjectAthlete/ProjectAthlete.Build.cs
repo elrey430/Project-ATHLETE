@@ -16,6 +16,7 @@ public class ProjectAthlete : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"AthleteCore",
+			"AthleteBody",
 		});
 	}
 }

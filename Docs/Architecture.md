@@ -13,6 +13,9 @@ AthleteTests (DeveloperTool; never shipped)
 ProjectAthlete (primary game module: AthleteLab scaffolding)
     |
     v
+AthleteBody (morphology, segment inertial model, strength, athlete Data Assets)
+    |
+    v
 AthleteCore (simulation foundation)
     |
     v
@@ -22,14 +25,15 @@ Unreal Engine (Core, CoreUObject, Engine, DeveloperSettings)
 | Module | Contains | Must never depend on |
 |---|---|---|
 | `AthleteCore` | units, deterministic RNG, telemetry, debug draw, simulation settings/seed | anything football, gameplay, or presentation |
-| `ProjectAthlete` | `AAthleteLabGameMode`, `AAthleteLabPhysicsProbe` | presentation systems |
+| `AthleteBody` | `FAthleteMorphology`, `FAthleteBodyModel`, `FAthleteStrengthProfile`, `UAthleteDefinition`, anthropometric reference data ([Milestone 1](Milestone1_AthleteBody.md)) | gameplay, football, presentation |
+| `ProjectAthlete` | `AAthleteLabGameMode`, `AAthleteLabPhysicsProbe`, `AAthleteLabBodyPreview` | presentation systems |
 | `AthleteTests` | automation tests | (it's allowed to depend on everything it tests) |
 
 Planned modules are added **only when their milestone starts**. No empty placeholders:
 
 | Planned module | Milestone | Pipeline stage |
 |---|---|---|
-| `AthleteBody` | 1-2 | morphology, mass distribution, articulated body |
+| (`AthleteBody` grows) | 2 | articulated physics body built from `FAthleteBodyModel` |
 | `AthleteMotor` | 3-4, 7 | balance, locomotion, contact motor skills (Physical Athlete Controller) |
 | `FootballBall` | 10 | ball physics |
 | `AthletePerception` / `AthleteCognition` | 11 | perception, belief state, decisions, intent |
@@ -40,7 +44,7 @@ Planned modules are added **only when their milestone starts**. No empty placeho
 
 | Plugin | Source | Why | Scope |
 |---|---|---|---|
-| `PythonScriptPlugin` | engine | generates the AthleteLab level from `Scripts/Editor/build_athlete_lab.py` | editor only |
+| `PythonScriptPlugin` | engine | generates lab content: athlete assets (`create_sample_athletes.py`) and the AthleteLab level (`build_athlete_lab.py`) | editor only |
 | `VisualStudioTools` | vendored at `Plugins/VisualStudioTools` (Microsoft, MIT) | Blueprint references in VS, and Test Explorer discovery and running | editor only |
 
 Tests must carry `CommandletContext` (see `AthleteTestFlags`), because VS discovers and runs them through a commandlet.

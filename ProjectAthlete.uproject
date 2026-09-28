@@ -10,6 +10,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "AthleteBody",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "ProjectAthlete",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

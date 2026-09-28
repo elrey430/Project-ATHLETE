@@ -5,7 +5,16 @@ A physics-first American football simulation in Unreal Engine 5.8.
 > The athlete does not play an animation that says what happened. The athlete attempts to
 > perform an action, and the simulation discovers what happens.
 
-**Current state:** Milestone 0 (project foundation). There's no athlete and no football yet.
+**Current state:** Milestone 1 ([physical athlete definition](Docs/Milestone1_AthleteBody.md)).
+Athletes have computed bodies (segment masses, centers of mass, inertia) and strength data, but no
+physics body or movement yet. No football.
+
+## Athletes
+
+Athletes are Data Assets in `Content/Athletes` (`DA_Athlete_Reference`, `DA_Athlete_A`, `DA_Athlete_B`).
+Double-click one to edit height, mass, proportions, mass distribution, and strength. The **Fill
+Strength From General Population Baseline** button recomputes strength from age, height, and mass.
+The AthleteLab level shows each sample athlete's body next to the start line, updating live as you edit.
 
 ## Requirements
 
@@ -24,7 +33,7 @@ Run these from the project root in PowerShell. Close the editor before building 
 | Run some tests | `... Scripts\RunTests.ps1 -Filter Athlete.Core` |
 | Reproducible lab run | `... Scripts\RunLab.ps1 -Seconds 6 -Seed 42` |
 | Regenerate VS solution | `... Scripts\GenerateProjectFiles.ps1` (after adding or removing C++ files) |
-| Rebuild the lab level | delete `Content/Lab/Maps/AthleteLab`, then `... Scripts\BuildLab.ps1` |
+| Regenerate athletes + lab level | `... Scripts\BuildLab.ps1 -Rebuild` (replaces the generated level) |
 
 Open the editor by double-clicking `ProjectAthlete.uproject`. Open the code with `ProjectAthlete.sln`.
 
@@ -43,6 +52,7 @@ Visual Studio Integration Tool plugin in `Plugins/VisualStudioTools`; see its `V
 |---|---|
 | `athlete.Debug.Kinematics 1` | velocity arrows |
 | `athlete.Debug.CenterOfMass 1` | center-of-mass markers |
+| `athlete.Debug.Anatomy 0` / `1` | hide/show athlete body previews (on by default) |
 | `athlete.Debug.VelocityArrowScale 10` | cm of arrow per m/s |
 | `athlete.Telemetry.Flush` | write telemetry to disk now |
 

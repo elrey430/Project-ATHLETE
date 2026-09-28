@@ -13,6 +13,8 @@
 #   - sun, sky light, sky atmosphere
 #   - a PlayerStart looking down the measurement lane
 #   - one physics probe released 3 m above the floor
+#   - body previews of the sample athletes (run create_sample_athletes.py first), standing
+#     side by side behind the start line and facing the PlayerStart
 
 import unreal
 
@@ -33,6 +35,16 @@ CUBE_MESH = "/Engine/BasicShapes/Cube.Cube"          # 1 m cube, pivot at center
 FLOOR_MATERIAL = "/Engine/EngineMaterials/WorldGridMaterial.WorldGridMaterial"
 MARKER_MATERIAL = "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"
 PROBE_CLASS = "/Script/ProjectAthlete.AthleteLabPhysicsProbe"
+BODY_PREVIEW_CLASS = "/Script/ProjectAthlete.AthleteLabBodyPreview"
+
+# (athlete asset, label, lateral position in m). Spaced 1.5 m apart, 3 m behind the start line.
+BODY_PREVIEWS = [
+    ("/Game/Athletes/DA_Athlete_A", "A  5'9\" 190 lb", -1.5),
+    ("/Game/Athletes/DA_Athlete_Reference", "Reference  1.74 m 73 kg", 0.0),
+    ("/Game/Athletes/DA_Athlete_B", "B  6'4\" 240 lb", 1.5),
+]
+BODY_PREVIEW_X_M = -3.0
+BODY_LABEL_HEIGHT_M = 2.2
 
 
 def log(message):
@@ -124,6 +136,23 @@ def main():
     if probe_class is None:
         fail("Could not find " + PROBE_CLASS + ". Is the C++ project compiled?")
     spawn(probe_class, "PhysicsProbe", "Lab/Instruments", unreal.Vector(0.0, 0.0, cm(PROBE_RELEASE_HEIGHT_M)))
+
+    # Body previews face -X (yaw 180), toward the PlayerStart side of the lab.
+    preview_class = unreal.load_class(None, BODY_PREVIEW_CLASS)
+    if preview_class is None:
+        fail("Could not find " + BODY_PREVIEW_CLASS + ". Is the C++ project compiled?")
+    for asset_path, label, y_m in BODY_PREVIEWS:
+        athlete = load(asset_path)
+        preview = spawn(preview_class, "BodyPreview_" + athlete.get_name(), "Lab/Instruments",
+                        unreal.Vector(cm(BODY_PREVIEW_X_M), cm(y_m), 0.0),
+                        unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        preview.set_editor_property("athlete", athlete)
+        text = spawn(unreal.TextRenderActor, "Label_" + athlete.get_name(), "Lab/Instruments",
+                     unreal.Vector(cm(BODY_PREVIEW_X_M), cm(y_m), cm(BODY_LABEL_HEIGHT_M)),
+                     unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        text.text_render.set_text(label)
+        text.text_render.set_world_size(14.0)
+        text.text_render.set_horizontal_alignment(unreal.HorizTextAligment.EHTA_CENTER)
 
     if not level_editor.save_current_level():
         fail("Could not save " + MAP_PATH)

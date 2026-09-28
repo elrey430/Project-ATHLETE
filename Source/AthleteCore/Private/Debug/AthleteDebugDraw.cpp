@@ -19,6 +19,12 @@ namespace
 		TEXT("athlete.Debug.CenterOfMass"), false,
 		TEXT("Draw ATHLETE center-of-mass markers."));
 
+	TAutoConsoleVariable<bool> CVarDebugAnatomy(
+		TEXT("athlete.Debug.Anatomy"), true,
+		TEXT("Draw ATHLETE body segments and segment centers of mass (lab body previews)."));
+
+	constexpr int32 SphereSegments = 12;
+
 	TAutoConsoleVariable<float> CVarVelocityArrowScale(
 		TEXT("athlete.Debug.VelocityArrowScale"), 10.0f,
 		TEXT("Debug arrow length in cm per 1 m/s of velocity."));
@@ -31,6 +37,7 @@ bool AthleteDebug::IsChannelEnabled(EAthleteDebugChannel Channel)
 	{
 	case EAthleteDebugChannel::Kinematics:   return CVarDebugKinematics.GetValueOnGameThread();
 	case EAthleteDebugChannel::CenterOfMass: return CVarDebugCenterOfMass.GetValueOnGameThread();
+	case EAthleteDebugChannel::Anatomy:      return CVarDebugAnatomy.GetValueOnGameThread();
 	default:                                 return false;
 	}
 #else
@@ -59,6 +66,41 @@ void AthleteDebug::DrawPoint(const UWorld* World, EAthleteDebugChannel Channel, 
 	if (World && IsChannelEnabled(Channel))
 	{
 		DrawDebugPoint(World, Location, PointSize, Color, /*bPersistentLines=*/false, /*LifeTime=*/-1.0f, /*DepthPriority=*/0);
+	}
+#endif
+}
+
+void AthleteDebug::DrawLine(const UWorld* World, EAthleteDebugChannel Channel, const FVector& Start, const FVector& End, const FColor& Color)
+{
+#if ENABLE_DRAW_DEBUG
+	if (World && IsChannelEnabled(Channel))
+	{
+		DrawDebugLine(World, Start, End, Color, /*bPersistentLines=*/false, /*LifeTime=*/-1.0f, /*DepthPriority=*/0, LineThickness);
+	}
+#endif
+}
+
+void AthleteDebug::DrawCapsuleBetween(const UWorld* World, EAthleteDebugChannel Channel, const FVector& Start, const FVector& End, float Radius, const FColor& Color)
+{
+#if ENABLE_DRAW_DEBUG
+	if (World && IsChannelEnabled(Channel))
+	{
+		// DrawDebugCapsule takes a center, a half-height measured to the tips (including the
+		// hemispherical caps), and a rotation whose Z axis is the capsule axis.
+		const FVector Axis = End - Start;
+		const float Length = Axis.Size();
+		const FQuat Rotation = FRotationMatrix::MakeFromZ(Axis.GetSafeNormal()).ToQuat();
+		DrawDebugCapsule(World, (Start + End) * 0.5, Length * 0.5f + Radius, Radius, Rotation, Color, /*bPersistentLines=*/false, /*LifeTime=*/-1.0f);
+	}
+#endif
+}
+
+void AthleteDebug::DrawSphere(const UWorld* World, EAthleteDebugChannel Channel, const FVector& Center, float Radius, const FColor& Color)
+{
+#if ENABLE_DRAW_DEBUG
+	if (World && IsChannelEnabled(Channel))
+	{
+		DrawDebugSphere(World, Center, Radius, SphereSegments, Color, /*bPersistentLines=*/false, /*LifeTime=*/-1.0f);
 	}
 #endif
 }
