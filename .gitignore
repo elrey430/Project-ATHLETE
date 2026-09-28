@@ -1,0 +1,28 @@
+# Unreal-generated folders: always rebuildable, never committed
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+
+# IDE / generated project files
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.sdf
+*.VC.db
+*.VC.opendb
+*.opensdf
+*.vcxproj*
+.vsconfig
+
+# OS noise
+Thumbs.db
+.DS_Store
+
+# Python caches from editor scripts
+__pycache__/
