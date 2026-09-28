@@ -6,6 +6,7 @@
 #include "Anatomy/AthleteBodyModel.h"
 #include "Anatomy/AthleteMobility.h"
 #include "Articulation/AthletePhysicalBodyComponent.h"
+#include "AthleteMotorComponent.h"
 #include "Components/BoxComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
@@ -75,6 +76,17 @@ public:
 			return false;
 		}
 		return true;
+	}
+
+	/** Adds muscles (and optionally balance control) to the body. */
+	UAthleteMotorComponent* AddMotor(const FAthleteStrengthProfile& Strength, const FAthleteMotorSkill& Skill, bool bBalance)
+	{
+		UAthleteMotorComponent* Motor = NewObject<UAthleteMotorComponent>(BodyActor, TEXT("Motor"));
+		Motor->bBalanceEnabled = bBalance;
+		Motor->MotorSkill = Skill;
+		Motor->RegisterComponent();
+		Motor->InitializeMuscles(Strength, Skill);
+		return Motor;
 	}
 
 	/** Ticks the world; returns the mean wall-clock milliseconds per tick. */

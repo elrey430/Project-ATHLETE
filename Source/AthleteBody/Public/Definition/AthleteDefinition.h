@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Anatomy/AthleteMobility.h"
 #include "Anatomy/AthleteMorphology.h"
+#include "Capability/AthleteMotorSkill.h"
 #include "Capability/AthleteStrength.h"
 #include "Engine/DataAsset.h"
 #include "AthleteDefinition.generated.h"
@@ -39,6 +40,10 @@ public:
 	/** Joint ranges of motion (flexibility). Defaults to normal adult (AAOS) values. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Capability")
 	FAthleteMobilityProfile Mobility;
+
+	/** Neuromuscular control: muscle tone, damping, balance strategy, reaction time. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Capability")
+	FAthleteMotorSkill MotorSkill;
 
 	/** Computes the physical body. Returns false (and logs why) if the morphology is invalid. */
 	bool BuildBodyModel(FAthleteBodyModel& OutModel, FString* OutError = nullptr) const;

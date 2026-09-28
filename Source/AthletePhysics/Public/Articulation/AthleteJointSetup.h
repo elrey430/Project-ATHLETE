@@ -62,4 +62,12 @@ namespace AthleteJointSetup
 
 	/** Rotation that turns From toward To (perpendicular unit vectors) by AngleDeg. */
 	ATHLETEPHYSICS_API FQuat RotateToward(const FVector& From, const FVector& To, double AngleDeg);
+
+	/**
+	 * The constraint-space orientation target (child frame relative to parent frame) for a desired
+	 * posture of this joint. ChildRelativeToParent is the child segment's rotation relative to its
+	 * parent segment, in body-frame axes, measured from the reference pose (identity = reference).
+	 *   frames: child = C * J, parent = P * J * N_local, so target = (J * N_local)^-1 * (P^-1 C) * J
+	 */
+	ATHLETEPHYSICS_API FQuat ComputeDriveTarget(const FAthleteJointSetup& Setup, const FQuat& ChildRelativeToParent);
 }

@@ -15,6 +15,8 @@
 #   - one physics probe released 3 m above the floor
 #   - body previews of the sample athletes (run create_sample_athletes.py first), standing
 #     side by side behind the start line and facing the PlayerStart
+#   - Milestone 2 passive-body experiments 3 m past the start line
+#   - Milestone 3 standing experiments (muscles + balance) 8 m past the start line
 
 import unreal
 
@@ -54,6 +56,22 @@ RAGDOLLS = [
     ("/Game/Athletes/DA_Athlete_A", "DROP", -2.0, "A: drop 1.5 m, 30 deg tilt"),
     ("/Game/Athletes/DA_Athlete_Reference", "COLLAPSE", 0.0, "Reference: passive collapse"),
     ("/Game/Athletes/DA_Athlete_B", "PUSH", 2.0, "B: 60 N*s chest push"),
+]
+
+# Milestone 3 standing experiments (muscles + balance), 8 m past the start line, facing the
+# PlayerStart. Pushes are at the pelvis over 0.1 s, 3 s after release (once quiet standing has
+# settled), in the athlete's local frame (+X = his forward, i.e. toward the PlayerStart).
+# Measured recovery limits (forward):
+# Reference ~15 N*s, A ~17.5, B ~22.5 (Docs/Milestone3_StandingBalance.md).
+STANDING_CLASS = "/Script/ProjectAthlete.AthleteLabStanding"
+STANDING_X_M = 8.0
+STANDING = [
+    # (athlete asset, scenario, push N*s forward, lateral position m, label)
+    ("/Game/Athletes/DA_Athlete_A", "QUIET_STANDING", 0.0, -4.0, "A: quiet standing"),
+    ("/Game/Athletes/DA_Athlete_Reference", "PUSH", 10.0, -2.0, "Reference: 10 N*s push (recovers)"),
+    ("/Game/Athletes/DA_Athlete_B", "PUSH", 20.0, 0.0, "B: 20 N*s push (recovers)"),
+    ("/Game/Athletes/DA_Athlete_Reference", "PUSH", 40.0, 2.0, "Reference: 40 N*s push (falls)"),
+    ("/Game/Athletes/DA_Athlete_Reference", "NO_NEURAL_CONTROL", 0.0, 4.0, "Reference: no neural control"),
 ]
 
 
@@ -176,6 +194,24 @@ def main():
         ragdoll.set_editor_property("scenario", getattr(unreal.AthleteLabRagdollScenario, scenario))
         text = spawn(unreal.TextRenderActor, "Label_Ragdoll_" + athlete.get_name(), "Lab/Experiments",
                      unreal.Vector(cm(RAGDOLL_X_M), cm(y_m), cm(BODY_LABEL_HEIGHT_M)),
+                     unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        text.text_render.set_text(label)
+        text.text_render.set_world_size(12.0)
+        text.text_render.set_horizontal_alignment(unreal.HorizTextAligment.EHTA_CENTER)
+
+    standing_class = unreal.load_class(None, STANDING_CLASS)
+    if standing_class is None:
+        fail("Could not find " + STANDING_CLASS + ". Is the C++ project compiled?")
+    for index, (asset_path, scenario, push_ns, y_m, label) in enumerate(STANDING):
+        athlete = load(asset_path)
+        standing = spawn(standing_class, "Standing_%d_%s" % (index, athlete.get_name()), "Lab/Experiments",
+                         unreal.Vector(cm(STANDING_X_M), cm(y_m), 0.0),
+                         unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
+        standing.set_editor_property("athlete", athlete)
+        standing.set_editor_property("scenario", getattr(unreal.AthleteLabStandingScenario, scenario))
+        standing.set_editor_property("push_impulse_ns", unreal.Vector(push_ns, 0.0, 0.0))
+        text = spawn(unreal.TextRenderActor, "Label_Standing_%d" % index, "Lab/Experiments",
+                     unreal.Vector(cm(STANDING_X_M), cm(y_m), cm(BODY_LABEL_HEIGHT_M)),
                      unreal.Rotator(roll=0.0, pitch=0.0, yaw=180.0))
         text.text_render.set_text(label)
         text.text_render.set_world_size(12.0)

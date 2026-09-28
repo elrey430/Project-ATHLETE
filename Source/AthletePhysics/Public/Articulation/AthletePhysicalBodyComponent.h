@@ -74,6 +74,14 @@ public:
 	int32 VelocityIterations = 0;
 
 	/**
+	 * Allow Chaos to put this body to sleep (freeze it) when it is nearly still. Off by default: a
+	 * sleeping body is frozen in place, which would fake stability for a standing athlete, whose
+	 * muscles never stop working. (A future optimization for bodies that are truly at rest.)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Athlete|Solver")
+	bool bCanSleep = false;
+
+	/**
 	 * Gyroscopic torque: the term that makes a spinning body with unequal principal inertias
 	 * change its angular velocity so its angular MOMENTUM stays constant. Chaos leaves it off by
 	 * default; without it, spinning limbs and tumbling bodies drift from correct rigid-body

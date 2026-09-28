@@ -23,6 +23,10 @@ namespace
 		TEXT("athlete.Debug.Anatomy"), true,
 		TEXT("Draw ATHLETE body segments and segment centers of mass (lab body previews)."));
 
+	TAutoConsoleVariable<bool> CVarDebugBalance(
+		TEXT("athlete.Debug.Balance"), false,
+		TEXT("Draw ATHLETE balance state: support center, extrapolated center of mass, muscle torques."));
+
 	constexpr int32 SphereSegments = 12;
 
 	TAutoConsoleVariable<float> CVarVelocityArrowScale(
@@ -38,6 +42,7 @@ bool AthleteDebug::IsChannelEnabled(EAthleteDebugChannel Channel)
 	case EAthleteDebugChannel::Kinematics:   return CVarDebugKinematics.GetValueOnGameThread();
 	case EAthleteDebugChannel::CenterOfMass: return CVarDebugCenterOfMass.GetValueOnGameThread();
 	case EAthleteDebugChannel::Anatomy:      return CVarDebugAnatomy.GetValueOnGameThread();
+	case EAthleteDebugChannel::Balance:      return CVarDebugBalance.GetValueOnGameThread();
 	default:                                 return false;
 	}
 #else

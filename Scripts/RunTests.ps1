@@ -1,11 +1,13 @@
-# Project ATHLETE - run automated tests headlessly and print a summary.
+﻿# Project ATHLETE - run automated tests headlessly and print a summary.
 # Usage:  powershell -ExecutionPolicy Bypass -File Scripts\RunTests.ps1 [-Filter Athlete.Core]
 # Exit code 0 = all tests passed. The full report lands in Saved\Automation\Reports\index.json.
 # Close the Unreal Editor first.
 
 param(
     # Tests whose full name starts with this prefix are run.
-    [string]$Filter = 'Athlete'
+    [string]$Filter = 'Athlete',
+    # Also print Info lines of passing tests (measurements, studies).
+    [switch]$ShowInfo
 )
 
 . "$PSScriptRoot\AthleteEnv.ps1"
@@ -31,7 +33,7 @@ foreach ($Test in $Report.tests) {
     $Color = if ($Test.state -eq 'Success') { 'Green' } else { 'Red' }
     Write-Host ("[{0,-7}] {1}" -f $Test.state, $Test.fullTestPath) -ForegroundColor $Color
     foreach ($Entry in $Test.entries) {
-        if ($Entry.event.type -ne 'Info' -or $Test.state -ne 'Success') {
+        if ($ShowInfo -or $Entry.event.type -ne 'Info' -or $Test.state -ne 'Success') {
             Write-Host ("            {0}: {1}" -f $Entry.event.type, $Entry.event.message)
         }
     }

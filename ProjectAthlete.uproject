@@ -20,6 +20,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "AthleteMotor",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "ProjectAthlete",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

@@ -13,6 +13,7 @@ class UWorld;
  *   athlete.Debug.Kinematics 1      velocity / acceleration arrows
  *   athlete.Debug.CenterOfMass 1    center-of-mass markers
  *   athlete.Debug.Anatomy 1         body segments and segment centers of mass (on by default)
+ *   athlete.Debug.Balance 1         balance: support center, extrapolated center of mass (XCoM), muscle torques
  *
  * Add a channel only when a real system needs it (forces, contacts, perception, intent...).
  * All drawing compiles to nothing in Shipping builds.
@@ -22,6 +23,7 @@ enum class EAthleteDebugChannel : uint8
 	Kinematics,
 	CenterOfMass,
 	Anatomy,
+	Balance,
 
 	Count
 };

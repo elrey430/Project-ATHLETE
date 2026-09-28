@@ -19,6 +19,10 @@ enum class EAthleteJointAction : uint8
 	ShoulderAdduction,
 	ElbowFlexion,
 	ElbowExtension,
+	// Added in Milestone 3 (appended so existing assets keep their values).
+	WristFlexion,
+	TrunkExtension,
+	NeckExtension,
 
 	Count UMETA(Hidden)
 };

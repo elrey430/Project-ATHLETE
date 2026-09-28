@@ -9,6 +9,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Engine/World.h"
 #include "Physics/Experimental/PhysInterface_Chaos.h"
+#include "PhysicsProxy/SingleParticlePhysicsProxy.h"
 #include "PhysicsEngine/BodyInstance.h"
 #include "PhysicsEngine/ConstraintInstance.h"
 #include "Units/AthleteUnits.h"
@@ -192,6 +193,13 @@ UShapeComponent* UAthletePhysicalBodyComponent::CreateSegmentBody(EAthleteSegmen
 		}
 	}
 	ApplyMassProperties(Body, Segment);
+	if (!bCanSleep)
+	{
+		FPhysicsCommand::ExecuteWrite(Instance.GetPhysicsActor(), [](const FPhysicsActorHandle& Actor)
+		{
+			Actor->GetGameThreadAPI().SetSleepType(Chaos::ESleepType::NeverSleep);
+		});
+	}
 	return Body;
 }
 

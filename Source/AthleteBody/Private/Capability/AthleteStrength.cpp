@@ -37,7 +37,16 @@ namespace
 		{ EAthleteJointAction::ShoulderAdduction,   EMode::Isokinetic,  60.0,  -72.9, -0.06,   72.0, 0.38 },
 		{ EAthleteJointAction::ElbowFlexion,        EMode::Isometric,    0.0,  -23.8, -0.13,   22.0, 0.51 },
 		{ EAthleteJointAction::ElbowExtension,      EMode::Isokinetic,  60.0,   -4.4, -0.07,   12.0, 0.42 },
+		{ EAthleteJointAction::WristFlexion,        EMode::Isometric,    0.0,   -6.9, -0.07,   10.0, 0.21 },
 	};
+
+	/**
+	 * ESTIMATES, not from Harbo et al. (the study did not test the trunk or neck). Peak isometric
+	 * extension torque per kg of body mass for healthy adult men, chosen as order-of-magnitude
+	 * values (roughly 250 N*m trunk and 30 N*m neck for an 80 kg man). Calibration candidates.
+	 */
+	constexpr double TrunkExtensionNmPerKg = 3.0;
+	constexpr double NeckExtensionNmPerKg = 0.4;
 }
 
 FAthleteStrengthProfile FAthleteStrengthProfile::MakeGeneralPopulationMaleBaseline(double AgeYears, double StatureM, double BodyMassKg)
@@ -52,6 +61,16 @@ FAthleteStrengthProfile FAthleteStrengthProfile::MakeGeneralPopulationMaleBaseli
 		Strength.TestVelocityDegPerSec = Row.TestVelocityDegPerSec;
 		Profile.Actions.Add(Row.Action, Strength);
 	}
+
+	auto AddEstimate = [&Profile](EAthleteJointAction Action, double TorqueNm)
+	{
+		FAthleteJointActionStrength Strength;
+		Strength.PeakTorqueNm = TorqueNm;
+		Strength.TestMode = EAthleteStrengthTestMode::Isometric;
+		Profile.Actions.Add(Action, Strength);
+	};
+	AddEstimate(EAthleteJointAction::TrunkExtension, TrunkExtensionNmPerKg * BodyMassKg);
+	AddEstimate(EAthleteJointAction::NeckExtension, NeckExtensionNmPerKg * BodyMassKg);
 	return Profile;
 }
 
@@ -69,6 +88,9 @@ const TCHAR* AthleteStrength::GetActionName(EAthleteJointAction Action)
 	case EAthleteJointAction::ShoulderAdduction:   return TEXT("shoulder_adduction");
 	case EAthleteJointAction::ElbowFlexion:        return TEXT("elbow_flexion");
 	case EAthleteJointAction::ElbowExtension:      return TEXT("elbow_extension");
+	case EAthleteJointAction::WristFlexion:        return TEXT("wrist_flexion");
+	case EAthleteJointAction::TrunkExtension:      return TEXT("trunk_extension");
+	case EAthleteJointAction::NeckExtension:       return TEXT("neck_extension");
 	default:                                       return TEXT("invalid");
 	}
 }

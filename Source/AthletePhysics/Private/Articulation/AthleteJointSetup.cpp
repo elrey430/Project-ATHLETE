@@ -64,6 +64,13 @@ FQuat AthleteJointSetup::RotateToward(const FVector& From, const FVector& To, do
 	return FQuat((From ^ To).GetSafeNormal(), FMath::DegreesToRadians(AngleDeg));
 }
 
+FQuat AthleteJointSetup::ComputeDriveTarget(const FAthleteJointSetup& Setup, const FQuat& ChildRelativeToParent)
+{
+	// GetParentFrame() = NeutralRotation * JointFrame = J * N_local, and the child frame is J.
+	return Setup.GetParentFrame().Inverse() * ChildRelativeToParent * Setup.JointFrame;
+}
+
+
 FAthleteJointSetup AthleteJointSetup::Compute(const FAthleteBodyModel& Model, EAthleteJoint Joint, const FAthleteJointRangeOfMotion& Range)
 {
 	const FJointDirections D = GetDirections(Joint);
