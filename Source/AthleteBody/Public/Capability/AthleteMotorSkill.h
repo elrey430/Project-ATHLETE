@@ -66,4 +66,50 @@ struct ATHLETEBODY_API FAthleteMotorSkill
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Balance", meta = (Units = "s", ClampMin = "0", ClampMax = "0.3"))
 	double PostureReflexDelayS = 0.05;
+
+	// --- Locomotion technique (Milestone 4). How he walks, not how strong or fast he is. ---
+
+	/**
+	 * Time per step (half a stride). 0.4 s is a brisk, athletic 150 steps/min (a casual walk is about
+	 * 0.5 s). Quicker steps give a misplaced foot less time to matter: the body drifts from the foot
+	 * by exp(omega0 T), about 3.6x over 0.4 s but 4.9x over 0.5 s. Measured (Milestone 4, stepping in
+	 * place, 5 trials of 12 s): no falls at 0.4 s, all five fell at 0.5 s.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "s", ClampMin = "0.2", ClampMax = "1.0"))
+	double StepDurationS = 0.4;
+
+	/** How high the ankle lifts at mid-swing, above where it stands (the toes hang lower: the foot droops). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "m", ClampMin = "0", ClampMax = "0.3"))
+	double SwingHeightM = 0.12;
+
+	/**
+	 * Side-to-side distance between the feet while walking (people: roughly 0.1-0.2 m). The gait
+	 * derives where to land from it: in a steady rhythm each foot lands b = width / (1 + exp(omega0 * T))
+	 * outside the capture point, so the body falls from one foot toward the other.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "m", ClampMin = "0", ClampMax = "0.3"))
+	double StepWidthM = 0.18;
+
+	/**
+	 * How quickly he lets his movement plan change (m/s per s). A plan, not a capacity: whether the
+	 * body achieves it depends on his feet, balance, and strength.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "m/s^2", ClampMin = "0.1", ClampMax = "10"))
+	double PlanAccelerationMps2 = 1.5;
+
+	/** How quickly he turns the direction he faces while stepping. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "deg/s", ClampMin = "0", ClampMax = "720"))
+	double TurnRateDegPerS = 120.0;
+
+	/** Knee bend of the supporting leg while walking. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "deg", ClampMin = "0", ClampMax = "45"))
+	double StanceKneeFlexionDeg = 10.0;
+
+	/** Muscle activation of the swinging leg's hip and knee, as a multiple of standing stiffness. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (ClampMin = "0.5", ClampMax = "10"))
+	double SwingStiffnessScale = 2.0;
+
+	/** Toes lifted at mid-swing (ankle dorsiflexion) for clearance. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Motor Skill|Locomotion", meta = (Units = "deg", ClampMin = "0", ClampMax = "30"))
+	double SwingToeUpDeg = 10.0;
 };

@@ -81,6 +81,8 @@ FAthleteJointSetup AthleteJointSetup::Compute(const FAthleteBodyModel& Model, EA
 	Setup.LongAxis = D.LongAxis;
 	Setup.FlexionDirection = D.Flexion;
 	Setup.AbductionDirection = D.Abduction;
+	Setup.AxialReference = D.AxialReference;
+	Setup.InternalRotationDirection = D.InternalRotation;
 
 	// Joint frame: X = long axis, Y = flexion rotation axis, Z = X x Y (right-handed).
 	const FVector AxisX = D.LongAxis;

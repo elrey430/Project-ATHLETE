@@ -1,0 +1,96 @@
+# Project ATHLETE - DeepMimic walking for the athlete (LocoMuJoCo v1.1.0 PPO).
+# LocoMuJoCo's published jax_rl_mimic example (examples/training_examples/jax_rl_mimic/conf.yaml, which
+# trained the Unitree H1 in the baseline run) with ONLY these changes:
+#  - env_name: MjxAthleteReference (our exported body, Scripts/MuJoCo/athlete_loco);
+#  - motion: LocoMuJoCo's default walk fitted to our body (Scripts/MuJoCo/retarget_motion.py) instead of
+#    LAFAN1, whose human-skeleton version walks crouched;
+#  - validation ignores no joints (the example lists pelvis_* joints the H1 doesn't have, so it ignores
+#    none either; ignoring the free root joint breaks LocoMuJoCo's metrics);
+#  - the unused position-control gains (H1-specific) are dropped: torque control, as in the example;
+#  - njmax set (see below): the athlete needs more constraint rows than the default.
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/launcher: basic
+
+wandb:
+  project: "athlete-deepmimic"
+
+experiment:
+  task_factory:
+    name: ImitationFactory
+    params:
+      default_dataset_conf:
+        task: walk
+  env_params:
+    env_name: MjxAthleteReference
+    use_mjwarp: True
+    nconmax: 7000
+    # Constraint rows per world for MuJoCo Warp (joint limits + contacts). The default was too small for
+    # the athlete (37 hinges with anatomical limits): 3,483 "nefc overflow ... increase njmax to <=101"
+    # messages on 2026-09-30, i.e. limits and contacts silently dropped. The H1 never needed this.
+    njmax: 160
+    headless: True
+    horizon: 1000
+    goal_type: GoalTrajMimic
+    goal_params:
+      visualize_goal: true
+    control_type: DefaultControl
+    control_params:
+    reward_type: MimicReward
+    reward_params:
+      qpos_w_sum: 0.4
+      qvel_w_sum: 0.2
+      rpos_w_sum: 0.5
+      rquat_w_sum: 0.3
+      rvel_w_sum: 0.1
+      sites_for_mimic:
+        - upper_body_mimic
+        - left_hand_mimic
+        - left_foot_mimic
+        - right_hand_mimic
+        - right_foot_mimic
+  hidden_layers: [512, 256]
+  lr: 1e-4
+  num_envs: 2048
+  num_steps: 200
+  total_timesteps: 300e6
+  update_epochs: 4
+  proportion_env_reward: 0.0
+  num_minibatches: 32
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  init_std: 0.2
+  learnable_std: false
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  activation: tanh
+  anneal_lr: false
+  weight_decay: 0.0
+  normalize_env: true
+  debug: false
+  n_seeds: 1
+  vmap_across_seeds: true
+  validation:
+    active: true
+    num_steps: 100
+    num_envs: 100
+    num: 10
+    quantities:
+      - JointPosition
+      - JointVelocity
+      - RelSitePosition
+      - RelSiteVelocity
+      - RelSiteOrientation
+    measures:
+      - EuclideanDistance
+      - DynamicTimeWarping
+      - DiscreteFrechetDistance
+    rel_site_names:
+      - upper_body_mimic
+      - left_hand_mimic
+      - left_foot_mimic
+      - right_hand_mimic
+      - right_foot_mimic
+    joints_to_ignore: []

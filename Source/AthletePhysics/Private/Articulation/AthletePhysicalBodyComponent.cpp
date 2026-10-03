@@ -446,46 +446,59 @@ double UAthletePhysicalBodyComponent::GetMaxJointSeparationM() const
 	return AthleteUnits::UnrealToMeters(MaxSeparationCm);
 }
 
-double UAthletePhysicalBodyComponent::GetLowestPointM(EAthleteSegment* OutLowestSegment) const
+double UAthletePhysicalBodyComponent::GetSegmentLowestPointM(EAthleteSegment Segment) const
 {
 	// Exact geometry (not Unreal's bounding boxes, which are loose for tilted capsules).
-	double LowestCm = TNumericLimits<double>::Max();
+	const FAthleteSegmentCollisionShape& Shape = GetCollisionShape(Segment);
+	const FTransform& Transform = GetSegmentBody(Segment)->GetComponentTransform();
+	double LowestCm;
+	if (Shape.Type == EAthleteCollisionShapeType::Box)
+	{
+		// Lowest of the 8 corners.
+		const FVector Half = AthleteUnits::MetersToUnreal(Shape.BoxHalfExtentsM);
+		LowestCm = TNumericLimits<double>::Max();
+		for (int32 Corner = 0; Corner < 8; ++Corner)
+		{
+			const FVector Local((Corner & 1) ? Half.X : -Half.X, (Corner & 2) ? Half.Y : -Half.Y, (Corner & 4) ? Half.Z : -Half.Z);
+			LowestCm = FMath::Min(LowestCm, Transform.TransformPosition(Local).Z);
+		}
+	}
+	else
+	{
+		// Lower of the two hemisphere centers, minus the radius.
+		const double RadiusCm = AthleteUnits::MetersToUnreal(Shape.CapsuleRadiusM);
+		const double SegmentHalfCm = AthleteUnits::MetersToUnreal(Shape.CapsuleHalfHeightM) - RadiusCm;
+		const double EndA = Transform.TransformPosition(FVector(0, 0, SegmentHalfCm)).Z;
+		const double EndB = Transform.TransformPosition(FVector(0, 0, -SegmentHalfCm)).Z;
+		LowestCm = FMath::Min(EndA, EndB) - RadiusCm;
+	}
+	return AthleteUnits::UnrealToMeters(LowestCm);
+}
+
+double UAthletePhysicalBodyComponent::GetLowestPointM(EAthleteSegment* OutLowestSegment) const
+{
+	double Lowest = TNumericLimits<double>::Max();
 	for (int32 Index = 0; Index < SegmentBodies.Num(); ++Index)
 	{
 		const EAthleteSegment Segment = AthleteSegments::FromIndex(Index);
-		const FAthleteSegmentCollisionShape& Shape = GetCollisionShape(Segment);
-		const FTransform& Transform = SegmentBodies[Index]->GetComponentTransform();
-		double SegmentLowestCm;
-		if (Shape.Type == EAthleteCollisionShapeType::Box)
+		const double SegmentLowest = GetSegmentLowestPointM(Segment);
+		if (SegmentLowest < Lowest)
 		{
-			// Lowest of the 8 corners.
-			const FVector Half = AthleteUnits::MetersToUnreal(Shape.BoxHalfExtentsM);
-			SegmentLowestCm = TNumericLimits<double>::Max();
-			for (int32 Corner = 0; Corner < 8; ++Corner)
-			{
-				const FVector Local((Corner & 1) ? Half.X : -Half.X, (Corner & 2) ? Half.Y : -Half.Y, (Corner & 4) ? Half.Z : -Half.Z);
-				SegmentLowestCm = FMath::Min(SegmentLowestCm, Transform.TransformPosition(Local).Z);
-			}
-		}
-		else
-		{
-			// Lower of the two hemisphere centers, minus the radius.
-			const double RadiusCm = AthleteUnits::MetersToUnreal(Shape.CapsuleRadiusM);
-			const double SegmentHalfCm = AthleteUnits::MetersToUnreal(Shape.CapsuleHalfHeightM) - RadiusCm;
-			const double EndA = Transform.TransformPosition(FVector(0, 0, SegmentHalfCm)).Z;
-			const double EndB = Transform.TransformPosition(FVector(0, 0, -SegmentHalfCm)).Z;
-			SegmentLowestCm = FMath::Min(EndA, EndB) - RadiusCm;
-		}
-		if (SegmentLowestCm < LowestCm)
-		{
-			LowestCm = SegmentLowestCm;
+			Lowest = SegmentLowest;
 			if (OutLowestSegment)
 			{
 				*OutLowestSegment = Segment;
 			}
 		}
 	}
-	return AthleteUnits::UnrealToMeters(LowestCm);
+	return Lowest;
+}
+
+FVector UAthletePhysicalBodyComponent::GetJointCenterWorldM(EAthleteJoint Joint) const
+{
+	// The joint's anchor on the child segment (the two anchors coincide while the joint holds together).
+	const FConstraintInstance& Constraint = *Joints[AthleteJoints::ToIndex(Joint)];
+	return AthleteUnits::UnrealToMeters(GetSegmentBody(AthleteJoints::GetChildSegment(Joint))->GetComponentTransform().TransformPosition(Constraint.GetRefFrame(EConstraintFrame::Frame1).GetLocation()));
 }
 
 FAthleteJointAngles UAthletePhysicalBodyComponent::GetJointAngles(EAthleteJoint Joint) const
@@ -552,5 +565,19 @@ void UAthletePhysicalBodyComponent::SetGravityEnabled(bool bEnabled)
 	for (UShapeComponent* Body : SegmentBodies)
 	{
 		Body->SetEnableGravity(bEnabled);
+	}
+}
+
+void UAthletePhysicalBodyComponent::ResetToReferencePose()
+{
+	// Same placement as when the segments were created: each at its shape center in the body frame.
+	const FTransform& BodyFrame = GetComponentTransform();
+	for (int32 Index = 0; Index < SegmentBodies.Num(); ++Index)
+	{
+		UShapeComponent* Body = SegmentBodies[Index];
+		Body->SetWorldLocationAndRotation(BodyFrame.TransformPosition(AthleteUnits::MetersToUnreal(CollisionShapes[Index].CenterM)), BodyFrame.GetRotation(),
+			false, nullptr, ETeleportType::ResetPhysics);
+		Body->SetPhysicsLinearVelocity(FVector::ZeroVector);
+		Body->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
 	}
 }

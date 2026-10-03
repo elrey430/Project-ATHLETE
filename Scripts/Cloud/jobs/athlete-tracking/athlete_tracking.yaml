@@ -1,0 +1,131 @@
+# Project ATHLETE - Milestone 4: a TRACKING policy for controller-driven movement (DReCon-style).
+# Controller input -> motion matching (Scripts/MuJoCo/motion_matching.py) picks the mocap that does it ->
+# this policy makes the simulated athlete follow that reference with its own torques. AMP (commands straight
+# into the policy) failed twice on 2026-10-01; tracking is the method already proven on this body (the
+# walking policy: 0/20 falls on the full CPU model).
+# Same PPO settings as athlete_walk.yaml (LocoMuJoCo's jax_rl_mimic example, DeepMimic reward), and:
+#  - motion: the six mocap clips fitted to the athlete (walk, run, turning on the spot, random walking with
+#    starts/stops/turns, stepping in place x2) PLUS twelve 5-minute clips the motion matcher made from random
+#    controller input (mm_random_0..11, made on the VM by run.sh): matcher output, jumps and blends
+#    included, is what the policy follows at run time. Hard clips are listed several times (see task);
+#  - training starts from a previous policy's weights (run.sh --init-from, the uploaded PPOJax_saved.pkl):
+#    the walking policy for run 1, run 1's tracker for run 2, run 2's for run 3, run 3's for run 4;
+#  - run 3 (fidelity): goal GoalTrajMimicLookahead (the reference 0.1/0.2/0.3 s ahead, appended to the
+#    observation: the warm start widens the inputs), and the athlete's shared contact model (heel + ball
+#    soles, limbs with the floor, capsule self-collision: athlete_loco.env.configure_contacts), the same
+#    model the tests run;
+#  - run 4 (turning): the fidelity tracker couldn't follow turns. Mirrored mocap (mirror_motion.py: turns
+#    both ways), 12 turn-heavy matcher clips (mm_turn_*: 80% of commands turn, a quarter on the spot),
+#    turning material at ~82% of episode starts, and reward MimicHeadingReward (MimicReward plus explicit
+#    facing and turning-rate terms, athlete_loco/rewards.py);
+#  - run 5 (invariant): the observation no longer depends on the athlete's compass heading (invariant_obs,
+#    goal GoalTrackInvariant: athlete_loco/invariant.py, proven by Scripts/MuJoCo/check_invariance.py).
+#    Run 4's tracker turned the wrong way on the spot when it started facing 90 degrees. New observation
+#    layout, so training starts FROM SCRATCH (no PPOJax_saved.pkl uploaded);
+#  - run 6 (speed): run 5's tracker brakes and turns (3/6 M4 tests, 5/5 trials) but lags the reference
+#    speed (~0.2 m/s walking, ~1 m/s running). Warm start from it; a speed term in the reward
+#    (velocity_w_sum); running clips x3; 6 speed-heavy matcher clips (mm_speed_*) next to 6 turn-heavy
+#    ones; the quiet-standing clip (stand, stand_motion.py).
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/launcher: basic
+
+wandb:
+  project: "athlete-tracking"
+
+experiment:
+  task_factory:
+    name: ImitationFactory
+    params:
+      default_dataset_conf:
+        # Episodes start in a random FILE (uniform), so a clip listed twice gets twice the starts. Run 1
+        # (one of each, 6 matcher clips) learned walking and standing but fell within ~1.5 s on the turning,
+        # start/stop and matcher clips: they got a few % of training each (short episodes). Hard material
+        # now gets ~87% of the starts.
+        task: [walk, walk_mirror, stepinplace1, stepinplace2, stand, stand,
+               run, run, run, run_mirror, run_mirror, run_mirror,
+               walkturn, walkturn, walkturn_mirror, walkturn_mirror,
+               random_walk, random_walk, random_walk_mirror, random_walk_mirror,
+               mm_turn_0, mm_turn_1, mm_turn_2, mm_turn_3, mm_turn_4, mm_turn_5,
+               mm_speed_0, mm_speed_1, mm_speed_2, mm_speed_3, mm_speed_4, mm_speed_5]
+  env_params:
+    env_name: MjxAthleteReference
+    use_mjwarp: True
+    # Contact buffer: raised from 7000 for run 3's extra pairs (limbs with the floor, self-collision).
+    nconmax: 12000
+    # Constraint rows per world for MuJoCo Warp (joint limits + contacts). The default was too small for
+    # the athlete (37 hinges with anatomical limits): 3,483 "nefc overflow ... increase njmax to <=101"
+    # messages on 2026-09-30, i.e. limits and contacts silently dropped. The H1 never needed this.
+    njmax: 200  # 160 until run 3; raised for its extra contact pairs
+    headless: True
+    horizon: 1000
+    goal_type: GoalTrackInvariant
+    invariant_obs: true
+    goal_params:
+      visualize_goal: true
+    control_type: DefaultControl
+    control_params:
+    reward_type: MimicHeadingReward
+    reward_params:
+      heading_w_sum: 0.3     # facing: exp(-5 e^2), e in rad
+      heading_w_exp: 5.0
+      yaw_rate_w_sum: 0.2    # turning rate: exp(-1 e^2), e in rad/s
+      yaw_rate_w_exp: 1.0
+      velocity_w_sum: 0.4    # pelvis forward/sideways speed: exp(-2 |e|^2), e in m/s
+      velocity_w_exp: 2.0
+      qpos_w_sum: 0.4
+      qvel_w_sum: 0.2
+      rpos_w_sum: 0.5
+      rquat_w_sum: 0.3
+      rvel_w_sum: 0.1
+      sites_for_mimic:
+        - upper_body_mimic
+        - left_hand_mimic
+        - left_foot_mimic
+        - right_hand_mimic
+        - right_foot_mimic
+  hidden_layers: [512, 256]
+  lr: 1e-4
+  num_envs: 2048
+  num_steps: 200
+  total_timesteps: 300e6
+  update_epochs: 4
+  proportion_env_reward: 0.0
+  num_minibatches: 32
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.2
+  init_std: 0.2
+  learnable_std: false
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  activation: tanh
+  anneal_lr: false
+  weight_decay: 0.0
+  normalize_env: true
+  debug: false
+  n_seeds: 1
+  vmap_across_seeds: true
+  validation:
+    active: true
+    num_steps: 100
+    num_envs: 100
+    num: 10
+    quantities:
+      - JointPosition
+      - JointVelocity
+      - RelSitePosition
+      - RelSiteVelocity
+      - RelSiteOrientation
+    measures:
+      - EuclideanDistance
+      - DynamicTimeWarping
+      - DiscreteFrechetDistance
+    rel_site_names:
+      - upper_body_mimic
+      - left_hand_mimic
+      - left_foot_mimic
+      - right_hand_mimic
+      - right_foot_mimic
+    joints_to_ignore: []

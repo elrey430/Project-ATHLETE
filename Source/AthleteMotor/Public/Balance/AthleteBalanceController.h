@@ -15,6 +15,8 @@ struct FAthleteBalanceSensing
 	FAthleteBalanceSensing()
 	{
 		for (FQuat& Rotation : SegmentRotations) { Rotation = FQuat::Identity; }
+		for (FVector& Center : JointCentersM) { Center = FVector::ZeroVector; }
+		FootSoleHeightM[0] = FootSoleHeightM[1] = 0.0;
 	}
 
 	double TimeS = 0.0;
@@ -32,6 +34,15 @@ struct FAthleteBalanceSensing
 	FQuat BodyFrameRotation = FQuat::Identity;
 	/** Each segment's world orientation (vestibular + proprioceptive sense of where the body parts are). */
 	TStaticArray<FQuat, AthleteSegments::NumSegments> SegmentRotations;
+	/** Each joint's center in the world (proprioception: where the limbs are). */
+	TStaticArray<FVector, AthleteJoints::NumJoints> JointCentersM;
+	/** Lowest point of each foot above the ground [left, right] (m): touch and pressure on the soles. */
+	double FootSoleHeightM[2];
+	/**
+	 * The heading the athlete is holding, as a rotation from the reference-pose heading, in
+	 * body-frame axes (a pure yaw). Standing and walking hold the body facing this way.
+	 */
+	FQuat HeadingDeviation = FQuat::Identity;
 
 	/** A segment's orientation relative to its reference-pose orientation, in body-frame axes. */
 	FQuat GetSegmentDeviation(EAthleteSegment Segment) const
@@ -59,6 +70,8 @@ struct FAthleteBalanceCommand
 struct FAthleteSegmentTargets
 {
 	FAthleteSegmentTargets() { for (FQuat& Q : Deviation) { Q = FQuat::Identity; } }
+	/** The heading these targets face (pure yaw, body-frame axes): see FAthleteBalanceSensing::HeadingDeviation. */
+	FQuat Heading = FQuat::Identity;
 	TStaticArray<FQuat, AthleteSegments::NumSegments> Deviation;
 };
 
@@ -77,13 +90,38 @@ struct FAthleteFootSupport
 	double TippingTorqueSideNm = 0.0;
 	/** The ankle muscles' stiffness (N*m/rad): turns a torque budget into an angle budget. 0 = no limit. */
 	double AnkleStiffnessNmPerRad = 0.0;
+	/** The load each foot carries standing on both (half the body weight, N); the tipping torques are for this load. */
+	double LoadPerFootN = 0.0;
 };
 
 /** Muscle targets: each joint's child-relative-to-parent rotation (body frame, identity = reference pose). */
 struct FAthletePosture
 {
-	FAthletePosture() { for (FQuat& Q : ChildRelativeToParent) { Q = FQuat::Identity; } }
+	FAthletePosture()
+	{
+		for (FQuat& Q : ChildRelativeToParent) { Q = FQuat::Identity; }
+		for (double& Scale : StiffnessScale) { Scale = 1.0; }
+		for (bool& bPlanned : bPlannedMotion) { bPlanned = false; }
+		for (int32& Partner : CancelReactionOf) { Partner = INDEX_NONE; }
+		for (FVector& Torque : FeedforwardTorqueNm) { Torque = FVector::ZeroVector; }
+	}
 	TStaticArray<FQuat, AthleteJoints::NumJoints> ChildRelativeToParent;
+	/**
+	 * Muscle activation per joint, as a multiple of its standing stiffness (damping scales with the
+	 * square root, keeping the damping ratio). Moving a limb quickly takes more activation than
+	 * holding a posture. Strength and force-velocity limits still apply.
+	 */
+	TStaticArray<double, AthleteJoints::NumJoints> StiffnessScale;
+	/**
+	 * True where the target is a planned movement (a swinging leg) rather than a posture to hold:
+	 * the joint is then also commanded the target's velocity, so it follows the plan instead of
+	 * being dragged behind it by its own damping (see FAthleteMuscleCommand::TargetSpin).
+	 */
+	TStaticArray<bool, AthleteJoints::NumJoints> bPlannedMotion;
+	/** Per joint: index of another joint whose reaction on their shared parent this one takes up (INDEX_NONE = none; see FAthleteMuscleCommand). */
+	TStaticArray<int32, AthleteJoints::NumJoints> CancelReactionOf;
+	/** Per joint: torque by activation alone (world frame, N*m, on the child; see FAthleteMuscleCommand::FeedforwardTorque). */
+	TStaticArray<FVector, AthleteJoints::NumJoints> FeedforwardTorqueNm;
 };
 
 namespace AthleteBalanceController
@@ -108,7 +146,7 @@ namespace AthleteBalanceController
 	 * Where each body part should be in space for a command: shanks and thighs lean with the body
 	 * (and tilt sideways), pelvis, trunk, and head lean with the body plus the hip pitch.
 	 */
-	ATHLETEMOTOR_API FAthleteSegmentTargets MakeSegmentTargets(const FAthleteBalanceCommand& Command);
+	ATHLETEMOTOR_API FAthleteSegmentTargets MakeSegmentTargets(const FAthleteBalanceCommand& Command, const FQuat& Heading = FQuat::Identity);
 
 	/**
 	 * Turns desired segment orientations into joint targets, using where the body parts actually are

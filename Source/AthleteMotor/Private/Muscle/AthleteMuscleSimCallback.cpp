@@ -1,6 +1,7 @@
 // Project ATHLETE
 
 #include "Muscle/AthleteMuscleSimCallback.h"
+#include "Muscle/AthleteMuscleModel.h"
 #include "Chaos/Utilities.h"
 #include "HAL/IConsoleManager.h"
 
@@ -49,6 +50,28 @@ namespace
 		const Chaos::FMatrix33 InverseInertiaWorld = Chaos::Utilities::ComputeWorldSpaceInertia(Body.R() * Body.RotationOfMass(), Chaos::FVec3(Body.InvI()));
 		return Chaos::FVec3::DotProduct(Axis, InverseInertiaWorld * Axis);
 	}
+
+	/**
+	 * A muscle torque (world) capped at the joint's strength AT ITS CURRENT SPEED (force-velocity):
+	 * the speed that matters is the joint's relative spin in the direction the muscle pushes.
+	 * Positive = the joint moves the way the muscle pushes (shortening, less torque available);
+	 * negative = it's being forced the other way (lengthening, more torque available).
+	 */
+	FVector CapAtStrength(const FAthleteMuscleCommand& Muscle, const FVector& Torque, const FVector& RelativeSpinWorld)
+	{
+		const double Magnitude = Torque.Size();
+		if (Magnitude <= 0.0)
+		{
+			return Torque;
+		}
+		double Limit = Muscle.TorqueLimit;
+		if (Muscle.MaxVelocityRadPerS > 0.0)
+		{
+			const double ShorteningSpeed = FVector::DotProduct(Torque / Magnitude, RelativeSpinWorld);
+			Limit *= AthleteMuscleModel::ForceVelocityFactor(ShorteningSpeed / Muscle.MaxVelocityRadPerS);
+		}
+		return Magnitude > Limit ? Torque * (Limit / Magnitude) : Torque;
+	}
 }
 
 void FAthleteMuscleSimCallback::OnPreSimulate_Internal()
@@ -58,6 +81,7 @@ void FAthleteMuscleSimCallback::OnPreSimulate_Internal()
 	{
 		return;
 	}
+	const uint64 StartCycles = FPlatformTime::Cycles64();
 	const double Dt = GetDeltaTime_Internal();
 	const double MaxStiffnessStepRatio = CVarMaxStiffnessStepRatio.GetValueOnAnyThread();
 	const double MaxSpinRemovedPerSubstep = CVarMaxSpinRemovedPerSubstep.GetValueOnAnyThread();
@@ -66,7 +90,14 @@ void FAthleteMuscleSimCallback::OnPreSimulate_Internal()
 	Output.JointTorquesNm.SetNumZeroed(Input->Joints.Num());
 	Output.JointErrorsRad.SetNumZeroed(Input->Joints.Num());
 
-	for (int32 Index = 0; Index < Input->Joints.Num(); ++Index)
+	// Pass 1 works out each joint's torque; pass 2 lets a joint take up another's reaction; pass 3 applies.
+	const int32 NumJoints = Input->Joints.Num();
+	TArray<FVector, TInlineAllocator<32>> Torques;          // world, Unreal units, on the child
+	TArray<FVector, TInlineAllocator<32>> RelativeSpinsWorld;
+	Torques.SetNumZeroed(NumJoints);
+	RelativeSpinsWorld.SetNumZeroed(NumJoints);
+
+	for (int32 Index = 0; Index < NumJoints; ++Index)
 	{
 		const FAthleteMuscleCommand& Muscle = Input->Joints[Index];
 		Chaos::FRigidBodyHandle_Internal* Child = Muscle.Child ? Muscle.Child->GetPhysicsThreadAPI() : nullptr;
@@ -82,18 +113,25 @@ void FAthleteMuscleSimCallback::OnPreSimulate_Internal()
 		const FQuat Relative = ParentFrame.Inverse() * ChildFrame;
 
 		// Rotation still needed to reach the target, as a rotation vector (axis * angle, shortest way
-		// round) in the parent joint frame: X twist, Y sagittal, Z frontal.
+		// round), first in the parent constraint frame...
 		FQuat ToTarget = Muscle.Target * Relative.Inverse();
 		ToTarget.EnforceShortestArcWith(FQuat::Identity);
 		FVector Axis;
 		double Angle;
 		ToTarget.ToAxisAndAngle(Axis, Angle);
-		const FVector Error = Axis * Angle;
 
-		// Relative spin, in the same joint frame.
-		const FVector RelativeSpin = ParentFrame.UnrotateVector(FVector(Child->W()) - FVector(Parent->W()));
+		// ...then along the joint's ANATOMICAL axes, where the per-axis gains belong: X the long axis
+		// (twist), Y the flexion axis (sagittal), Z the frontal axis. The constraint frame is turned by
+		// the range-of-motion neutral (the hip's by about 45 deg of flexion), and decomposing there put
+		// the hip's frontal stiffness mostly about its yaw and left its abductors at about half.
+		const FQuat AxisFrame = FQuat(Parent->R()) * Muscle.AxisFrameLocal;
+		const FVector Error = AxisFrame.UnrotateVector(ParentFrame.RotateVector(Axis * Angle));
 
-		// Spring toward the target and damper against relative spin, with per-axis gains. Each is then
+		// Relative spin, and its departure from the planned motion (no plan = hold still), on the same axes.
+		const FVector RelativeSpin = AxisFrame.UnrotateVector(FVector(Child->W()) - FVector(Parent->W()));
+		const FVector SpinError = RelativeSpin - AxisFrame.UnrotateVector(ParentFrame.RotateVector(Muscle.TargetSpin));
+
+		// Spring toward the target and damper against spin away from the plan, with per-axis gains. Each is then
 		// capped along the direction it actually pushes, at what one substep can represent for the
 		// two segments' inertia about that direction (see above): the effective gain in that
 		// direction is |torque| / |error| (or / |spin|).
@@ -104,27 +142,46 @@ void FAthleteMuscleSimCallback::OnPreSimulate_Internal()
 			{
 				return TorqueInFrame;
 			}
-			const FVector Direction = ParentFrame.RotateVector(TorqueInFrame / Magnitude);
+			const FVector Direction = AxisFrame.RotateVector(TorqueInFrame / Magnitude);
 			const double InverseInertia = InverseInertiaAbout(*Child, Direction) + InverseInertiaAbout(*Parent, Direction);
 			const double Gain = Magnitude / Displacement;
 			const double MaxGain = InverseInertia > 0.0 ? MaxRatio / (StepPower * InverseInertia) : Gain;
 			return Gain > MaxGain ? TorqueInFrame * (MaxGain / Gain) : TorqueInFrame;
 		};
 		const FVector SpringTorque = CapAlongTorque(Muscle.StiffnessPerRad * Error, Error.Size(), MaxStiffnessStepRatio, Dt * Dt);
-		const FVector DamperTorque = CapAlongTorque(-Muscle.DampingPerRadPerS * RelativeSpin, RelativeSpin.Size(), MaxSpinRemovedPerSubstep, Dt);
+		const FVector DamperTorque = CapAlongTorque(-Muscle.DampingPerRadPerS * SpinError, SpinError.Size(), MaxSpinRemovedPerSubstep, Dt);
 
-		// Total muscle torque, capped at the joint's strength.
-		FVector Torque = ParentFrame.RotateVector(SpringTorque + DamperTorque);
-		const double Magnitude = Torque.Size();
-		if (Magnitude > Muscle.TorqueLimit && Magnitude > 0.0)
-		{
-			Torque *= Muscle.TorqueLimit / Magnitude;
-		}
-
-		// Equal and opposite: muscles are internal to the body.
-		Child->AddTorque(Torque);
-		Parent->AddTorque(-Torque);
-		Output.JointTorquesNm[Index] = Torque / UnrealTorquePerNm;
-		Output.JointErrorsRad[Index] = Axis * Angle;
+		RelativeSpinsWorld[Index] = AxisFrame.RotateVector(RelativeSpin);
+		Torques[Index] = CapAtStrength(Muscle, AxisFrame.RotateVector(SpringTorque + DamperTorque) + Muscle.FeedforwardTorque, RelativeSpinsWorld[Index]);
+		Output.JointErrorsRad[Index] = Error;
 	}
+
+	// A joint told to take up another joint's reaction (the stance hip, for the swing hip: both pull
+	// on the pelvis) adds the opposite of that joint's torque, so the shared parent feels none of
+	// it; the difference goes down its own leg to the ground. Still an internal torque, still within
+	// its own strength. (SIMBICON, Yin et al. 2007: stance hip torque = -torso torque - swing hip torque.)
+	for (int32 Index = 0; Index < NumJoints; ++Index)
+	{
+		const int32 Partner = Input->Joints[Index].CancelReactionOf;
+		if (Torques.IsValidIndex(Partner) && Input->Joints[Partner].CancelReactionOf == INDEX_NONE)
+		{
+			Torques[Index] = CapAtStrength(Input->Joints[Index], Torques[Index] - Torques[Partner], RelativeSpinsWorld[Index]);
+		}
+	}
+
+	// Equal and opposite: muscles are internal to the body.
+	for (int32 Index = 0; Index < NumJoints; ++Index)
+	{
+		const FAthleteMuscleCommand& Muscle = Input->Joints[Index];
+		Chaos::FRigidBodyHandle_Internal* Child = Muscle.Child ? Muscle.Child->GetPhysicsThreadAPI() : nullptr;
+		Chaos::FRigidBodyHandle_Internal* Parent = Muscle.Parent ? Muscle.Parent->GetPhysicsThreadAPI() : nullptr;
+		if (!Child || !Parent || Dt <= 0.0)
+		{
+			continue;
+		}
+		Child->AddTorque(Torques[Index]);
+		Parent->AddTorque(-Torques[Index]);
+		Output.JointTorquesNm[Index] = Torques[Index] / UnrealTorquePerNm;
+	}
+	Output.ComputeSeconds = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - StartCycles);
 }

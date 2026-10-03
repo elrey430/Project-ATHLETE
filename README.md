@@ -5,11 +5,14 @@ A physics-first American football simulation in Unreal Engine 5.8.
 > The athlete does not play an animation that says what happened. The athlete attempts to
 > perform an action, and the simulation discovers what happens.
 
-**Current state:** Milestone 3 ([standing and balance](Docs/Milestone3_StandingBalance.md)).
+**Current state:** Milestone 4 ([locomotion](Docs/Milestone4_Locomotion.md)).
 Athletes have computed bodies ([Milestone 1](Docs/Milestone1_AthleteBody.md)) that simulate as articulated
-Chaos rigid bodies ([Milestone 2](Docs/Milestone2_PhysicalHumanoid.md)). They now stand by their own
-muscles, which run inside every physics step. Delayed balance and posture control keeps them up; they recover
-from small pushes and fall from big ones. No walking or football yet.
+Chaos rigid bodies ([Milestone 2](Docs/Milestone2_PhysicalHumanoid.md)) and stand by their own muscles
+([Milestone 3](Docs/Milestone3_StandingBalance.md)). Muscles now have force-velocity limits, and physics runs
+at 480 Hz. A hand-built gait steps in place and walks slowly (~0.3 m/s); faster walking falls within a few steps.
+A reinforcement-learning spike (Learning Agents) trains end to end. Milestone 4 concluded that human-like
+motion should be learned from motion capture, in a faster physics engine than Chaos: a physics-engine spike
+is next ([costs](Docs/Research_LearnedMotionCosts.md)). No football yet.
 
 ## Athletes
 
@@ -38,6 +41,8 @@ Run these from the project root in PowerShell. Close the editor before building 
 | Compile | `powershell -ExecutionPolicy Bypass -File Scripts\Build.ps1` |
 | Run all tests | `powershell -ExecutionPolicy Bypass -File Scripts\RunTests.ps1` |
 | Run some tests | `... Scripts\RunTests.ps1 -Filter Athlete.Core` (add `-ShowInfo` to see measurements of passing tests) |
+| Performance benchmark | `... Scripts\RunTests.ps1 -Filter ProjectPerf -ShowInfo` (not part of the normal suite) |
+| Learning spike | `... Scripts\SetupLearningPython.ps1` once, then `-Filter ProjectLearn.Spike.Walk.Smoke32` |
 | Reproducible lab run | `... Scripts\RunLab.ps1 -Seconds 6 -Seed 42` |
 | Regenerate VS solution | `... Scripts\GenerateProjectFiles.ps1` (after adding or removing C++ files) |
 | Regenerate athletes + lab level | `... Scripts\BuildLab.ps1 -Rebuild` (replaces the generated level) |

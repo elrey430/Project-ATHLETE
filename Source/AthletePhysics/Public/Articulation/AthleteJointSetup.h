@@ -51,6 +51,8 @@ struct FAthleteJointSetup
 	FVector LongAxis = FVector::ZeroVector;      // twist axis
 	FVector FlexionDirection = FVector::ZeroVector; // where the long axis tip moves under positive sagittal motion
 	FVector AbductionDirection = FVector::ZeroVector; // where the tip moves under positive frontal motion
+	FVector AxialReference = FVector::ZeroVector;     // a direction perpendicular to the long axis...
+	FVector InternalRotationDirection = FVector::ZeroVector; // ...and where it turns under internal rotation (ankle: inversion)
 
 	/** The parent-side constraint frame orientation: NeutralRotation * JointFrame. */
 	FQuat GetParentFrame() const { return NeutralRotation * JointFrame; }

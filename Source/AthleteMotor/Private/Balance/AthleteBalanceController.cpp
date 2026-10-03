@@ -49,7 +49,7 @@ FAthleteBalanceCommand AthleteBalanceController::Compute(const FAthleteBalanceSe
 	return Command;
 }
 
-FAthleteSegmentTargets AthleteBalanceController::MakeSegmentTargets(const FAthleteBalanceCommand& Command)
+FAthleteSegmentTargets AthleteBalanceController::MakeSegmentTargets(const FAthleteBalanceCommand& Command, const FQuat& Heading)
 {
 	const FQuat Lean = AthleteJointSetup::RotateToward(BodyUp, BodyForward, Command.LeanForwardDeg);
 	// Pelvis toward +Right means each leg's top moves right: the leg tilts from vertical toward +Right.
@@ -58,20 +58,22 @@ FAthleteSegmentTargets AthleteBalanceController::MakeSegmentTargets(const FAthle
 	const FQuat Legs = SideTilt * Lean;
 	const FQuat Trunk = HipPitch * Lean;
 
+	// The lean and hip pitch are in the heading's frame (forward = where he faces).
 	FAthleteSegmentTargets Targets;
+	Targets.Heading = Heading;
 	for (int32 Index = 0; Index < AthleteSegments::NumSegments; ++Index)
 	{
 		switch (AthleteSegments::GetKind(static_cast<EAthleteSegment>(Index)))
 		{
 		case EAthleteSegmentKind::Thigh:
 		case EAthleteSegmentKind::Shank:
-			Targets.Deviation[Index] = Legs;
+			Targets.Deviation[Index] = Heading * Legs;
 			break;
 		case EAthleteSegmentKind::Foot:
-			Targets.Deviation[Index] = FQuat::Identity; // flat on the ground (the feet are the base, not controlled here)
+			Targets.Deviation[Index] = Heading; // flat on the ground (the feet are the base, not controlled here)
 			break;
 		default:
-			Targets.Deviation[Index] = Trunk; // pelvis, abdomen, thorax, head (and arms, which hold joint angles)
+			Targets.Deviation[Index] = Heading * Trunk; // pelvis, abdomen, thorax, head (and arms, which hold joint angles)
 			break;
 		}
 	}
@@ -83,20 +85,21 @@ FAthletePosture AthleteBalanceController::SolveJointTargets(const FAthleteSegmen
 	// Where the shank may be sent, relative to where it is: its sagittal turn is capped at the angle
 	// whose ankle torque (stiffness x angle) the foot can still take. Leaning the shank BACK takes
 	// plantarflexor torque (pressure toward the toes), leaning it FORWARD dorsiflexor torque (heel).
-	auto LimitShank = [&Feet, &Perceived](const FQuat& Desired, EAthleteSegment Shank)
+	auto LimitShank = [&Feet, &Perceived, &Targets](const FQuat& Desired, EAthleteSegment Shank)
 	{
 		if (Feet.AnkleStiffnessNmPerRad <= 0.0)
 		{
 			return Desired;
 		}
 		const FQuat Current = Perceived.GetSegmentDeviation(Shank);
-		FVector Turn = (Desired * Current.Inverse()).GetShortestArcWith(FQuat::Identity).ToRotationVector(); // + about Y = forward
+		// The turn in the heading's frame: + about Y = forward, + about X = toward his left.
+		FVector Turn = Targets.Heading.UnrotateVector((Desired * Current.Inverse()).GetShortestArcWith(FQuat::Identity).ToRotationVector());
 		const double MaxBack = FootSupportMargin * Feet.TippingTorqueToesNm / Feet.AnkleStiffnessNmPerRad;
 		const double MaxForward = FootSupportMargin * Feet.TippingTorqueHeelNm / Feet.AnkleStiffnessNmPerRad;
 		const double MaxSideways = FootSupportMargin * Feet.TippingTorqueSideNm / Feet.AnkleStiffnessNmPerRad;
 		Turn.Y = FMath::Clamp(Turn.Y, -MaxBack, MaxForward);
 		Turn.X = FMath::Clamp(Turn.X, -MaxSideways, MaxSideways); // about the forward axis: sideways tilt
-		return FQuat::MakeFromRotationVector(Turn) * Current;
+		return FQuat::MakeFromRotationVector(Targets.Heading.RotateVector(Turn)) * Current;
 	};
 
 	FAthletePosture Posture;

@@ -20,6 +20,11 @@ public class AthleteTests : ModuleRules
 			"AthletePhysics",
 			"AthleteMotor",
 			"ProjectAthlete",
+			"AthleteLearning",
+			"LearningAgents",
+			"LearningAgentsTraining",
+			"LearningTraining", // LearningCore's training layer: the trainer headers include it
+			"XmlParser", // reads back the MuJoCo model export
 		});
 	}
 }

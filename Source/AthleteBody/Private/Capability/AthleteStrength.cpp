@@ -59,6 +59,7 @@ FAthleteStrengthProfile FAthleteStrengthProfile::MakeGeneralPopulationMaleBaseli
 		Strength.PeakTorqueNm = FMath::Max(0.0, Row.Intercept + Row.AgeCoeff * AgeYears + Row.HeightCoeff * StatureM + Row.MassCoeff * BodyMassKg);
 		Strength.TestMode = Row.Mode;
 		Strength.TestVelocityDegPerSec = Row.TestVelocityDegPerSec;
+		Strength.MaxVelocityDegPerSec = AthleteStrength::GetEstimatedMaxVelocityDegPerSec(Row.Action);
 		Profile.Actions.Add(Row.Action, Strength);
 	}
 
@@ -67,6 +68,7 @@ FAthleteStrengthProfile FAthleteStrengthProfile::MakeGeneralPopulationMaleBaseli
 		FAthleteJointActionStrength Strength;
 		Strength.PeakTorqueNm = TorqueNm;
 		Strength.TestMode = EAthleteStrengthTestMode::Isometric;
+		Strength.MaxVelocityDegPerSec = AthleteStrength::GetEstimatedMaxVelocityDegPerSec(Action);
 		Profile.Actions.Add(Action, Strength);
 	};
 	AddEstimate(EAthleteJointAction::TrunkExtension, TrunkExtensionNmPerKg * BodyMassKg);
@@ -92,5 +94,27 @@ const TCHAR* AthleteStrength::GetActionName(EAthleteJointAction Action)
 	case EAthleteJointAction::TrunkExtension:      return TEXT("trunk_extension");
 	case EAthleteJointAction::NeckExtension:       return TEXT("neck_extension");
 	default:                                       return TEXT("invalid");
+	}
+}
+
+double AthleteStrength::GetEstimatedMaxVelocityDegPerSec(EAthleteJointAction Action)
+{
+	// ESTIMATES (see header). Distal, fast joints higher; the trunk and neck slowest.
+	switch (Action)
+	{
+	case EAthleteJointAction::HipExtension:
+	case EAthleteJointAction::HipFlexion:          return 1000.0;
+	case EAthleteJointAction::KneeExtension:
+	case EAthleteJointAction::KneeFlexion:         return 1200.0;
+	case EAthleteJointAction::AnklePlantarFlexion:
+	case EAthleteJointAction::AnkleDorsiflexion:   return 900.0;
+	case EAthleteJointAction::ShoulderAbduction:
+	case EAthleteJointAction::ShoulderAdduction:   return 1200.0;
+	case EAthleteJointAction::ElbowFlexion:
+	case EAthleteJointAction::ElbowExtension:
+	case EAthleteJointAction::WristFlexion:        return 1500.0;
+	case EAthleteJointAction::TrunkExtension:      return 400.0;
+	case EAthleteJointAction::NeckExtension:       return 500.0;
+	default:                                       return 1000.0;
 	}
 }

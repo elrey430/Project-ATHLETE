@@ -134,6 +134,26 @@ FAthleteJointImpedance AthleteMuscleModel::ComputeStandingImpedance(const FAthle
 
 	Impedance.LimitingAction = GetLimitingAction(Joint);
 	const FAthleteJointActionStrength* Limit = Strength.Find(Impedance.LimitingAction);
-	Impedance.TorqueLimitNm = Limit ? Limit->PeakTorqueNm : 0.0;
+	const double MaxVelocityDegPerSec = (Limit && Limit->MaxVelocityDegPerSec > 0.0) ? Limit->MaxVelocityDegPerSec : AthleteStrength::GetEstimatedMaxVelocityDegPerSec(Impedance.LimitingAction);
+	Impedance.MaxVelocityRadPerS = FMath::DegreesToRadians(MaxVelocityDegPerSec);
+	// A strength measured while the joint moved (isokinetic) understates the isometric strength:
+	// divide out the force-velocity factor at the test speed.
+	const double TestFactor = (Limit && Limit->TestMode == EAthleteStrengthTestMode::Isokinetic)
+		? ForceVelocityFactor(Limit->TestVelocityDegPerSec / MaxVelocityDegPerSec) : 1.0;
+	Impedance.TorqueLimitNm = (Limit && TestFactor > 0.0) ? Limit->PeakTorqueNm / TestFactor : 0.0;
 	return Impedance;
+}
+
+double AthleteMuscleModel::ForceVelocityFactor(double ShorteningFraction)
+{
+	if (ShorteningFraction >= 0.0)
+	{
+		// Hill's hyperbola, normalized: F/F0 = (1 - v/vmax) / (1 + v/(k vmax)).
+		const double X = FMath::Min(ShorteningFraction, 1.0);
+		return (1.0 - X) / (1.0 + X / HillCurvature);
+	}
+	// Lengthening: a mirrored hyperbola, from 1 at rest to the eccentric plateau at y = 1.
+	// Slope at zero is 0.5 * (1 + 6 / k) = 12.5 vs 1 + 1 / k = 5 when shortening.
+	const double Y = FMath::Min(-ShorteningFraction, 1.0);
+	return EccentricPlateau - (EccentricPlateau - 1.0) * (1.0 - Y) / (1.0 + 6.0 * Y / HillCurvature);
 }

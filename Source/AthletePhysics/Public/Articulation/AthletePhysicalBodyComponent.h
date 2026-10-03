@@ -119,6 +119,10 @@ public:
 	double GetMaxJointSeparationM() const;
 	/** Lowest point of any collision shape, computed from the exact shape geometry (world Z, meters). */
 	double GetLowestPointM(EAthleteSegment* OutLowestSegment = nullptr) const;
+	/** Lowest point of one segment's collision shape (world Z, meters). */
+	double GetSegmentLowestPointM(EAthleteSegment Segment) const;
+	/** A joint's center in the world (meters). */
+	FVector GetJointCenterWorldM(EAthleteJoint Joint) const;
 	/** Current joint rotation relative to its range-of-motion center, and any limit violation. */
 	FAthleteJointAngles GetJointAngles(EAthleteJoint Joint) const;
 	/** Segment's world inertia tensor about its own center of mass, from the physics engine (kg*m^2). */
@@ -128,6 +132,12 @@ public:
 	/** Applies a linear impulse (N*s) at a world point (meters) on one segment. */
 	void AddImpulseAtPoint(EAthleteSegment Segment, const FVector& ImpulseNs, const FVector& WorldPointM);
 	void SetGravityEnabled(bool bEnabled);
+
+	/**
+	 * Puts every segment back in the reference pose where the body was built, at rest (teleports; no
+	 * forces). For restarting a trial or a training episode, never during play.
+	 */
+	void ResetToReferencePose();
 
 protected:
 	virtual void BeginPlay() override;

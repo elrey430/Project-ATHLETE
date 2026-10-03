@@ -57,6 +57,14 @@ struct ATHLETEBODY_API FAthleteJointActionStrength
 	/** Joint angular velocity during an isokinetic test; 0 for isometric. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strength", meta = (Units = "deg/s", ClampMin = "0"))
 	double TestVelocityDegPerSec = 0.0;
+
+	/**
+	 * Fastest the joint can move in this direction with no load: the speed at which the muscles'
+	 * torque drops to zero (force-velocity relation). 0 = unspecified (an estimate is used).
+	 * Explosive athletes have higher values; it bounds acceleration and top speed.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Strength", meta = (Units = "deg/s", ClampMin = "0"))
+	double MaxVelocityDegPerSec = 0.0;
 };
 
 /**
@@ -92,4 +100,12 @@ struct ATHLETEBODY_API FAthleteStrengthProfile
 namespace AthleteStrength
 {
 	ATHLETEBODY_API const TCHAR* GetActionName(EAthleteJointAction Action);
+
+	/**
+	 * ESTIMATE of an adult man's unloaded maximum joint angular velocity for an action (deg/s),
+	 * used where a profile doesn't specify one. Order-of-magnitude values from peak joint speeds in
+	 * unloaded movements (kicking, throwing, jumping: several hundred to ~1500 deg/s); to be
+	 * calibrated against sprint and jump performance.
+	 */
+	ATHLETEBODY_API double GetEstimatedMaxVelocityDegPerSec(EAthleteJointAction Action);
 }

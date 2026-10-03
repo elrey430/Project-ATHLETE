@@ -78,10 +78,36 @@ public:
 		return true;
 	}
 
+	/** Adds another athlete body (after Initialize), standing in the reference pose at OriginM. */
+	UAthletePhysicalBodyComponent* AddBody(FAutomationTestBase& Test, const FVector& OriginM, const FRotator& Rotation = FRotator::ZeroRotator,
+		const FAthleteMorphology& Morphology = FAthleteMorphology())
+	{
+		AActor* Actor = GetWorld()->SpawnActor<AActor>(AthleteUnits::MetersToUnreal(OriginM), Rotation);
+		UAthletePhysicalBodyComponent* NewBody = NewObject<UAthletePhysicalBodyComponent>(Actor, TEXT("PhysicalBody"));
+		NewBody->bBuildOnBeginPlay = false;
+		Actor->SetRootComponent(NewBody);
+		NewBody->SetWorldLocationAndRotation(AthleteUnits::MetersToUnreal(OriginM), Rotation);
+		NewBody->RegisterComponent();
+		FAthleteBodyModel Model;
+		FString Error;
+		if (!FAthleteBodyModel::Build(Morphology, Model, &Error) || !NewBody->BuildBodyFrom(Model, FAthleteMobilityProfile()))
+		{
+			Test.AddError(FString::Printf(TEXT("Could not build an extra body: %s"), *Error));
+			return nullptr;
+		}
+		return NewBody;
+	}
+
 	/** Adds muscles (and optionally balance control) to the body. */
 	UAthleteMotorComponent* AddMotor(const FAthleteStrengthProfile& Strength, const FAthleteMotorSkill& Skill, bool bBalance)
 	{
-		UAthleteMotorComponent* Motor = NewObject<UAthleteMotorComponent>(BodyActor, TEXT("Motor"));
+		return AddMotorTo(Body, Strength, Skill, bBalance);
+	}
+
+	/** Adds muscles (and optionally balance control) to any body in the scene. */
+	static UAthleteMotorComponent* AddMotorTo(UAthletePhysicalBodyComponent* TargetBody, const FAthleteStrengthProfile& Strength, const FAthleteMotorSkill& Skill, bool bBalance)
+	{
+		UAthleteMotorComponent* Motor = NewObject<UAthleteMotorComponent>(TargetBody->GetOwner(), TEXT("Motor"));
 		Motor->bBalanceEnabled = bBalance;
 		Motor->MotorSkill = Skill;
 		Motor->RegisterComponent();

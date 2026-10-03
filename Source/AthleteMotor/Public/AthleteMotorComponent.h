@@ -9,6 +9,8 @@
 #include "Components/ActorComponent.h"
 #include "Muscle/AthleteMuscleModel.h"
 #include "Muscle/AthleteMuscleSimCallback.h"
+#include "Locomotion/AthleteGaitController.h"
+#include "Locomotion/AthleteMovementIntent.h"
 #include "AthleteMotorComponent.generated.h"
 
 class UAthletePhysicalBodyComponent;
@@ -66,12 +68,21 @@ public:
 	bool InitializeMuscles(const FAthleteStrengthProfile& Strength, const FAthleteMotorSkill& Skill);
 	bool IsInitialized() const { return bMusclesInitialized; }
 
-	/** Sets the muscles' targets (the body still has to get there physically). */
-	void ApplyPosture(const FAthletePosture& Posture);
+	/** Sets the muscles' targets (the body still has to get there physically). DeltaTimeS: time since the last posture, to command planned movements' velocity (0 = hold). */
+	void ApplyPosture(const FAthletePosture& Posture, double DeltaTimeS = 0.0);
 
 	const FAthleteJointImpedance& GetJointImpedance(EAthleteJoint Joint) const { return Impedances[AthleteJoints::ToIndex(Joint)]; }
 	const FAthleteBalanceCommand& GetLastCommand() const { return LastCommand; }
 	EAthleteMotorState GetMotorState() const { return MotorState; }
+
+	/**
+	 * What he wants to do with his body (Milestone 4: where to move). The motor system tries; the
+	 * body decides. Zero velocity = stand.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Motor")
+	void SetMovementIntent(const FAthleteMovementIntent& Intent) { MovementIntent = Intent; }
+	const FAthleteMovementIntent& GetMovementIntent() const { return MovementIntent; }
+	const FAthleteGaitState& GetGaitState() const { return Gait.GetState(); }
 
 	/**
 	 * He counts as down once his perceived center of mass is below this fraction of its standing
@@ -83,8 +94,16 @@ public:
 	/** Muscle torque at a joint in the most recent completed physics substep (world frame, N*m, acting on the child segment). */
 	FVector GetJointTorqueNm(EAthleteJoint Joint) const;
 
-	/** Muscle error at a joint in the most recent completed substep: rotation still needed to reach the target, in the parent joint frame (X twist, Y sagittal, Z frontal; degrees). */
+	/** Muscle error at a joint in the most recent completed substep: rotation still needed to reach the target, along the joint's anatomical axes (X twist, Y sagittal, Z frontal; degrees). */
 	FVector GetJointErrorDeg(EAthleteJoint Joint) const;
+
+	// --- Performance telemetry (the most recent tick) ---
+	/** Physics substeps whose muscle outputs arrived this tick (normally the substeps per frame). */
+	int32 GetSubstepsLastTick() const { return SubstepsLastRead; }
+	/** Physics-thread time spent computing muscle torques over those substeps (ms). */
+	double GetMuscleMsLastTick() const { return MuscleMsLastRead; }
+	/** Game-thread time spent in this component's tick: sensing, balance, gait, posture (ms). */
+	double GetControlMsLastTick() const { return ControlMsLastTick; }
 
 	/** Current sensing of the body, undelayed (world frame). */
 	FAthleteBalanceSensing SenseNow() const;
@@ -101,6 +120,7 @@ private:
 
 	TArray<FAthleteJointImpedance> Impedances;
 	TArray<FAthleteMuscleCommand> MuscleCommands; // one per joint, sent to the physics thread every frame
+	TArray<bool> bPlannedLastFrame;               // per joint: its target was a planned movement last frame
 	TArray<FVector> LastJointTorquesNm;
 	TArray<FVector> LastJointErrorsRad;
 	FAthleteMuscleSimCallback* MuscleCallback = nullptr; // owned by the Chaos solver
@@ -108,7 +128,12 @@ private:
 	FAthleteBalanceCommand LastCommand;
 	FAthleteFootSupport FootSupport;
 	EAthleteMotorState MotorState = EAthleteMotorState::Standing;
+	FAthleteMovementIntent MovementIntent;
+	FAthleteGaitController Gait;
 	double StandingComHeightM = 0.0; // center of mass above the ground when the muscles came on
 	double GroundHeightM = 0.0;      // the ground his feet stood on then (flat ground assumed)
 	bool bMusclesInitialized = false;
+	int32 SubstepsLastRead = 0;
+	double MuscleMsLastRead = 0.0;
+	double ControlMsLastTick = 0.0;
 };

@@ -62,9 +62,14 @@ bool UAthleteMotorComponent::InitializeMuscles(const FAthleteStrengthProfile& St
 		Muscle.Parent = Body->GetSegmentBody(AthleteJoints::GetParentSegment(Joint))->BodyInstance.GetPhysicsActor();
 		Muscle.ChildFrameLocal = Constraint->GetRefFrame(EConstraintFrame::Frame1).GetRotation();
 		Muscle.ParentFrameLocal = Constraint->GetRefFrame(EConstraintFrame::Frame2).GetRotation();
+		// The parent constraint frame is (neutral * joint frame) in body terms; take the neutral back
+		// out to get the anatomical axes, in the parent's local space.
+		const FAthleteJointSetup& Setup = Body->GetJointSetup(Joint);
+		Muscle.AxisFrameLocal = Muscle.ParentFrameLocal * (Setup.JointFrame.Inverse() * Setup.NeutralRotation.Inverse() * Setup.JointFrame);
 		Muscle.StiffnessPerRad = Impedance.AxisStiffnessNmPerRad * UnrealTorquePerNm;
 		Muscle.DampingPerRadPerS = Impedance.AxisDampingNmsPerRad * UnrealTorquePerNm;
 		Muscle.TorqueLimit = Impedance.TorqueLimitNm * UnrealTorquePerNm;
+		Muscle.MaxVelocityRadPerS = Impedance.MaxVelocityRadPerS;
 	}
 	ApplyPosture(FAthletePosture()); // reference pose
 
@@ -77,6 +82,7 @@ bool UAthleteMotorComponent::InitializeMuscles(const FAthleteStrengthProfile& St
 	const double AnkleY = Body->GetBodyModel().GetJointCenterM(EAthleteJoint::AnkleLeft).Y;
 	FootSupport.TippingTorqueSideNm = WeightPerFootN * FMath::Max(FMath::Min(Foot.CenterM.Y + Foot.BoxHalfExtentsM.Y - AnkleY, AnkleY - (Foot.CenterM.Y - Foot.BoxHalfExtentsM.Y)), 0.0);
 	FootSupport.AnkleStiffnessNmPerRad = GetJointImpedance(EAthleteJoint::AnkleLeft).StiffnessNmPerRad;
+	FootSupport.LoadPerFootN = WeightPerFootN;
 
 	// He starts on his feet; remember how high his center of mass stands above them.
 	const FAthleteBalanceSensing Start = SenseNow();
@@ -84,6 +90,10 @@ bool UAthleteMotorComponent::InitializeMuscles(const FAthleteStrengthProfile& St
 	StandingComHeightM = Start.CenterOfMassM.Z - GroundHeightM;
 	MotorState = EAthleteMotorState::Standing;
 	SensingHistory.Reset();
+
+	// Walking: his own leg dimensions, facing the way his body was built.
+	const double BodyYawDeg = Body->GetComponentRotation().Yaw;
+	Gait.Initialize(FAthleteLegGeometry::FromModel(Body->GetBodyModel(), Foot.CenterM.X, Foot.BoxHalfExtentsM.Z), GroundHeightM, BodyYawDeg, BodyYawDeg);
 
 	MuscleCallback = Scene->GetSolver()->CreateAndRegisterSimCallbackObject_External<FAthleteMuscleSimCallback>();
 	bMusclesInitialized = true;
@@ -107,13 +117,40 @@ void UAthleteMotorComponent::DisableSolverDrive(EAthleteJoint Joint)
 	Constraint->SetAngularVelocityDriveSLERP(false);
 }
 
-void UAthleteMotorComponent::ApplyPosture(const FAthletePosture& Posture)
+void UAthleteMotorComponent::ApplyPosture(const FAthletePosture& Posture, double DeltaTimeS)
 {
 	UAthletePhysicalBodyComponent* Body = FindBody();
+	bPlannedLastFrame.SetNumZeroed(MuscleCommands.Num());
 	for (int32 Index = 0; Index < MuscleCommands.Num(); ++Index)
 	{
 		const EAthleteJoint Joint = AthleteJoints::FromIndex(Index);
-		MuscleCommands[Index].Target = AthleteJointSetup::ComputeDriveTarget(Body->GetJointSetup(Joint), Posture.ChildRelativeToParent[Index]);
+		FAthleteMuscleCommand& Muscle = MuscleCommands[Index];
+		const FQuat PreviousTarget = Muscle.Target;
+		Muscle.Target = AthleteJointSetup::ComputeDriveTarget(Body->GetJointSetup(Joint), Posture.ChildRelativeToParent[Index]);
+
+		// A planned movement: command its velocity too, the rate the target moved since last frame
+		// (a spin in the parent joint frame, like the muscle's error). Only once the plan has run for
+		// a frame: when a joint starts following a plan its target jumps, which is a new end point,
+		// not a velocity. Never faster than the joint can turn.
+		Muscle.TargetSpin = FVector::ZeroVector;
+		if (Posture.bPlannedMotion[Index] && bPlannedLastFrame[Index] && DeltaTimeS > 0.0)
+		{
+			FQuat Step = Muscle.Target * PreviousTarget.Inverse();
+			Step.EnforceShortestArcWith(FQuat::Identity);
+			FVector Axis;
+			double Angle;
+			Step.ToAxisAndAngle(Axis, Angle);
+			const double MaxSpeed = Impedances[Index].MaxVelocityRadPerS > 0.0 ? Impedances[Index].MaxVelocityRadPerS : UE_BIG_NUMBER;
+			Muscle.TargetSpin = Axis * FMath::Min(Angle / DeltaTimeS, MaxSpeed);
+		}
+		bPlannedLastFrame[Index] = Posture.bPlannedMotion[Index] && DeltaTimeS > 0.0;
+		Muscle.CancelReactionOf = Posture.CancelReactionOf[Index];
+		Muscle.FeedforwardTorque = Posture.FeedforwardTorqueNm[Index] * UnrealTorquePerNm;
+
+		// Activation: stiffness scales directly, damping with its square root (same damping ratio).
+		const double Scale = FMath::Max(Posture.StiffnessScale[Index], 0.0);
+		Muscle.StiffnessPerRad = Impedances[Index].AxisStiffnessNmPerRad * Scale * UnrealTorquePerNm;
+		Muscle.DampingPerRadPerS = Impedances[Index].AxisDampingNmsPerRad * FMath::Sqrt(Scale) * UnrealTorquePerNm;
 	}
 }
 
@@ -143,8 +180,12 @@ void UAthleteMotorComponent::PushMuscleCommands()
 void UAthleteMotorComponent::ReadMuscleOutputs()
 {
 	// One output per completed substep; keep the newest. Draining also returns them to the pool.
+	SubstepsLastRead = 0;
+	MuscleMsLastRead = 0.0;
 	while (Chaos::TSimCallbackOutputHandle<FAthleteMuscleOutput> Output = MuscleCallback->PopFutureOutputData_External())
 	{
+		++SubstepsLastRead;
+		MuscleMsLastRead += 1000.0 * Output->ComputeSeconds;
 		if (Output->JointTorquesNm.Num() == LastJointTorquesNm.Num())
 		{
 			LastJointTorquesNm = Output->JointTorquesNm;
@@ -189,15 +230,23 @@ FAthleteBalanceSensing UAthleteMotorComponent::SenseNow() const
 	Sensing.SupportCenterM.Z -= Body->GetCollisionShape(EAthleteSegment::FootLeft).BoxHalfExtentsM.Z;
 	Sensing.FootHalfLengthM = Body->GetCollisionShape(EAthleteSegment::FootLeft).BoxHalfExtentsM.X;
 
-	// Heading from the body frame (the athlete does not turn in Milestone 3).
+	// The heading he holds (turned by the gait) on top of the body frame he was built in.
 	const FQuat BodyFrame = Body->GetComponentQuat();
-	Sensing.ForwardAxis = BodyFrame.GetForwardVector().GetSafeNormal2D();
-	Sensing.RightAxis = BodyFrame.GetRightVector().GetSafeNormal2D();
 	Sensing.BodyFrameRotation = BodyFrame;
+	Sensing.HeadingDeviation = Gait.GetHeadingDeviation();
+	const FQuat Heading = BodyFrame * Sensing.HeadingDeviation;
+	Sensing.ForwardAxis = Heading.GetForwardVector().GetSafeNormal2D();
+	Sensing.RightAxis = Heading.GetRightVector().GetSafeNormal2D();
 	for (int32 Segment = 0; Segment < AthleteSegments::NumSegments; ++Segment)
 	{
 		Sensing.SegmentRotations[Segment] = Body->GetSegmentBody(static_cast<EAthleteSegment>(Segment))->GetComponentQuat();
 	}
+	for (int32 Joint = 0; Joint < AthleteJoints::NumJoints; ++Joint)
+	{
+		Sensing.JointCentersM[Joint] = Body->GetJointCenterWorldM(AthleteJoints::FromIndex(Joint));
+	}
+	Sensing.FootSoleHeightM[0] = Body->GetSegmentLowestPointM(EAthleteSegment::FootLeft) - GroundHeightM;
+	Sensing.FootSoleHeightM[1] = Body->GetSegmentLowestPointM(EAthleteSegment::FootRight) - GroundHeightM;
 	return Sensing;
 }
 
@@ -219,6 +268,7 @@ void UAthleteMotorComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 			return;
 		}
 	}
+	const uint64 ControlStartCycles = FPlatformTime::Cycles64();
 	ReadMuscleOutputs();
 
 	if (bBalanceEnabled && MotorState == EAthleteMotorState::Standing)
@@ -254,11 +304,24 @@ void UAthleteMotorComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		}
 		else
 		{
-			// Balance decides where the body should be; postural reflexes hold each segment there in space.
 			const double Gravity = FMath::Abs(AthleteUnits::UnrealToMeters(GetWorld()->GetGravityZ()));
-			LastCommand = AthleteBalanceController::Compute(ForBalance, MotorSkill, Gravity);
-			ApplyPosture(AthleteBalanceController::SolveJointTargets(AthleteBalanceController::MakeSegmentTargets(LastCommand), ForPosture, FootSupport));
+			FAthletePosture Posture;
+			if (Gait.Update(MovementIntent, ForBalance, ForPosture, Now, MotorSkill, FootSupport, Gravity, DeltaTime, Posture))
+			{
+				// Walking: the gait places the feet and drives the legs.
+				LastCommand = FAthleteBalanceCommand();
+				ApplyPosture(Posture, DeltaTime);
+			}
+			else
+			{
+				// Standing: balance decides where the body should be; postural reflexes hold each
+				// segment there in space, facing the heading he holds.
+				LastCommand = AthleteBalanceController::Compute(ForBalance, MotorSkill, Gravity);
+				ApplyPosture(AthleteBalanceController::SolveJointTargets(
+					AthleteBalanceController::MakeSegmentTargets(LastCommand, Gait.GetHeadingDeviation()), ForPosture, FootSupport));
+			}
 		}
 	}
 	PushMuscleCommands();
+	ControlMsLastTick = 1000.0 * FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - ControlStartCycles);
 }

@@ -1,0 +1,72 @@
+# Project ATHLETE - Milestone 4 locomotion: the athlete follows controller input (velocity commands) with
+# human style. AMP (Adversarial Motion Priors, LocoMuJoCo v1.1.0 AMPJax): the policy is rewarded for
+# following the commanded velocity (task reward) and, by a discriminator trained on motion capture fitted to
+# the athlete, for moving like the data (style reward), half and half.
+# Based on LocoMuJoCo's jax_amp example (H1 running); differences:
+#  - env: MjxAthleteReference (Scripts/MuJoCo/athlete_loco), njmax 160 (see athlete_walk.yaml);
+#  - goal: GoalVelocityCommand, a NEW command every 2-5 s within each episode (stand still among them), so
+#    accelerating, braking and turning happen during training; reward VelocityCommandReward (LocoMuJoCo's
+#    velocity-tracking formula). The example tracks the clip's own velocity instead;
+#  - motion data: LocoMuJoCo default clips fitted to the athlete (retarget_motion.py): walk, run, walkturn,
+#    random_walk, stepinplace1, stepinplace2;
+#  - episodes end when the pelvis leaves its healthy height range (a fall), not when it leaves a clip;
+#  - validation off (clip-tracking metrics don't apply to commanded movement).
+defaults:
+  - override hydra/job_logging: default
+  - override hydra/launcher: basic
+
+wandb:
+  project: "athlete-locomotion"
+
+experiment:
+  algorithm: AMPJax
+  # The discriminator judges movement only, not the command (run 1, 2026-10-01: with it visible the
+  # discriminator separated policy from data at once, 0.01 vs 0.99, and style learning never started).
+  discriminator_exclude_obs: [GoalVelocityCommand]
+  task_factory:
+    name: ImitationFactory
+    params:
+      default_dataset_conf:
+        task: [walk, run, walkturn, random_walk, stepinplace1, stepinplace2]
+  env_params:
+    env_name: MjxAthleteReference
+    use_mjwarp: True
+    nconmax: 7000
+    njmax: 160
+    headless: True
+    horizon: 1000
+    terminal_state_type: HeightBasedTerminalStateHandler
+    goal_type: GoalVelocityCommand
+    goal_params:
+      visualize_goal: true
+    reward_type: VelocityCommandReward
+  hidden_layers: [512, 256]
+  lr: 6e-5
+  disc_lr: 5e-5
+  num_envs: 2048
+  num_steps: 14
+  total_timesteps: 3e8
+  update_epochs: 4
+  disc_minibatch_size: 2048
+  proportion_env_reward: 0.5
+  n_disc_epochs: 50
+  num_minibatches: 32
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_eps: 0.1
+  init_std: 0.2
+  learnable_std: false
+  ent_coef: 0.0
+  disc_ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.75
+  activation: tanh
+  anneal_lr: false
+  weight_decay: 0.0001
+  normalize_env: true
+  debug: false
+  n_seeds: 1
+  vmap_across_seeds: true
+  validation:
+    active: false
+    num: 0
