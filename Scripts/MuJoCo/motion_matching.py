@@ -344,14 +344,32 @@ class MotionMatcher:
             self.facing = yaw + np.sign(error) * max_yaw
 
 
-def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False):
+def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False, run_maneuvers=False):
     """
     Controller input like a player's: held 1-4 s; stand, walk, run, turn, sidestep.
     turn_heavy: for training turns (2026-10-01: the tracker couldn't follow them). 80% of commands turn,
     and a quarter of all commands turn on the spot.
     speed_heavy: for training speed changes (2026-10-02: the tracker lagged the reference speed). Mostly
     straight (10% turn), speeds spread over 0..3 m/s with a third of commands running (2..3 m/s).
+    run_maneuvers: for training running turns and sidesteps (2026-10-02: every random-command fall was at
+    >= 1.9 m/s while turning or sidestepping, or after a big speed jump). 70% of commands run at 1.8..3 m/s,
+    turning (60%, up to 1.2 rad/s) and/or sidestepping (40%, up to 0.5 m/s); the rest are any speed or a
+    stand, so the speed jumps between them are large. Held 1.5-3.5 s.
     """
+    if run_maneuvers:
+        schedule, t = [], 0.0
+        while t < seconds:
+            hold = rng.uniform(1.5, 3.5)
+            if rng.random() < 0.7:
+                command = (rng.uniform(1.8, 3.0), rng.uniform(-0.5, 0.5) * (rng.random() < 0.4),
+                           rng.uniform(-1.2, 1.2) * (rng.random() < 0.6))
+            elif rng.random() < 0.3:
+                command = (0.0, 0.0, 0.0)
+            else:
+                command = (rng.uniform(0.0, 3.0), 0.0, rng.uniform(-1.2, 1.2) * (rng.random() < 0.3))
+            schedule.append((hold, command))
+            t += hold
+        return schedule
     p_turn, p_spot = (0.8, 0.25) if turn_heavy else (0.1, 0.0) if speed_heavy else (0.5, 0.0)
     schedule, t = [], 0.0
     while t < seconds:
@@ -423,7 +441,7 @@ def kinematic_check(database):
     return report
 
 
-def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed_heavy=False):
+def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed_heavy=False, run_maneuvers=False):
     """
     One continuous clip the matcher makes from random controller input, saved for training next to the
     mocap. (One clip per file: LocoMuJoCo's trajectory extender overran its buffer with several.)
@@ -434,7 +452,7 @@ def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed
     model = LocoEnv.registered_envs[ENV_NAME]()._model
     rng = np.random.default_rng(seed)
     matcher = MotionMatcher(database)
-    qpos, _, _ = play(matcher, random_commands(rng, seconds, turn_heavy, speed_heavy))
+    qpos, _, _ = play(matcher, random_commands(rng, seconds, turn_heavy, speed_heavy, run_maneuvers))
     # Velocities from the positions themselves (central differences, MuJoCo's own differencing), as
     # retarget_motion.py does: consistent with qpos, jumps and blends included. Ends dropped.
     qvel = np.zeros((len(qpos) - 2, model.nv))
@@ -457,6 +475,7 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--turn-heavy", action="store_true", help="mostly turning commands (random_commands)")
     parser.add_argument("--speed-heavy", action="store_true", help="mostly straight, varied speeds (random_commands)")
+    parser.add_argument("--run-maneuvers", action="store_true", help="running turns, sidesteps and speed jumps (random_commands)")
     args = parser.parse_args()
     database = MotionDatabase(args.motions)
     print(f"motion database: {database.n_frames} frames ({database.n_frames * DT / 60:.1f} min), "
@@ -466,7 +485,8 @@ def main():
     else:
         for i in range(args.first, args.first + args.count):
             name = args.name if args.count == 1 and args.first == 0 else f"{args.name}_{i}"
-            print(json.dumps(generate(database, args.motions, name, args.seconds, args.seed + i, args.turn_heavy, args.speed_heavy)), flush=True)
+            print(json.dumps(generate(database, args.motions, name, args.seconds, args.seed + i, args.turn_heavy, args.speed_heavy,
+                                         args.run_maneuvers)), flush=True)
 
 
 if __name__ == "__main__":

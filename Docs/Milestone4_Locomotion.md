@@ -330,6 +330,18 @@ Every random-command fall happens at running speed (≥ 1.9 m/s) while also turn
 after a big jump in commanded speed. The mocap and the matcher clips contain almost none of these combined
 running manoeuvres.
 
+**Running-manoeuvre run (warm start from chunk 14, 590 M more steps; `Saved/Cloud/athlete-athlete-tracking-1002-2323`).**
+It added 6 matcher clips of running turns, sidesteps and abrupt speed changes (`motion_matching.py
+--run-maneuvers`). The matcher clips were cut to 200 s: the motion dataset is compiled into the training
+program, and ~820 k frames ran the VM out of RAM.
+
+Results:
+- The five passing tests still pass 5/5 at chunks 10, 20 and 30.
+- Random-command falls dropped from 6–8 to 4–7 of 10. The final checkpoint has 5 falls and a speed error of
+  0.76 m/s; it is the current best tracker. The test still fails (the bar is ≤ 1 fall).
+- The remaining falls are spread out: command changes (run → stop, sudden speed changes) and combined
+  moves. No single manoeuvre is missing.
+
 Two test-harness fixes made these numbers trustworthy:
 - The driver now keeps the policy's input normalization frozen. Before, it updated during tests, so a test's
   result depended on the tests run before it.
@@ -359,7 +371,7 @@ Two test-harness fixes made these numbers trustworthy:
   string, so every SSH attempt failed. The scripts now always call `gcloud.cmd`.
 - **A follower killed by a shell time limit leaves the job running on the VM.** `GpuJob.ps1 -AttachRun`
   follows it again. Start long runs detached (`Start-Process`).
-- **Cost:** ~$14 of GPU time for all of §9.
+- **Cost:** ~$16 of GPU time for all of §9.
 
 ## 10. Open risks and debt
 

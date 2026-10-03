@@ -25,7 +25,11 @@
 #  - run 6 (speed): run 5's tracker brakes and turns (3/6 M4 tests, 5/5 trials) but lags the reference
 #    speed (~0.2 m/s walking, ~1 m/s running). Warm start from it; a speed term in the reward
 #    (velocity_w_sum); running clips x3; 6 speed-heavy matcher clips (mm_speed_*) next to 6 turn-heavy
-#    ones; the quiet-standing clip (stand, stand_motion.py).
+#    ones; the quiet-standing clip (stand, stand_motion.py);
+#  - run 7 (running manoeuvres): run 6's best tracker (chunk 14) passes 5/6 M4 tests; every random-command
+#    fall was at running speed while turning or sidestepping, or after a big speed jump. Warm start from it;
+#    6 running-manoeuvre matcher clips (mm_runman_*, motion_matching.py --run-maneuvers) next to 4
+#    turn-heavy and 4 speed-heavy ones.
 defaults:
   - override hydra/job_logging: default
   - override hydra/launcher: basic
@@ -46,8 +50,8 @@ experiment:
                run, run, run, run_mirror, run_mirror, run_mirror,
                walkturn, walkturn, walkturn_mirror, walkturn_mirror,
                random_walk, random_walk, random_walk_mirror, random_walk_mirror,
-               mm_turn_0, mm_turn_1, mm_turn_2, mm_turn_3, mm_turn_4, mm_turn_5,
-               mm_speed_0, mm_speed_1, mm_speed_2, mm_speed_3, mm_speed_4, mm_speed_5]
+               mm_turn_0, mm_turn_1, mm_turn_2, mm_turn_3, mm_speed_0, mm_speed_1, mm_speed_2, mm_speed_3,
+               mm_runman_0, mm_runman_1, mm_runman_2, mm_runman_3, mm_runman_4, mm_runman_5]
   env_params:
     env_name: MjxAthleteReference
     use_mjwarp: True

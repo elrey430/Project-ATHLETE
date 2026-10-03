@@ -84,9 +84,14 @@ done
 wait_parallel
 grep -h -E '^[{]' "$RESULTS"/mirror_*.log
 python stand_motion.py --motions "$PWD/motions" | grep -E '^[{]'  # quiet standing (needs the mirror map)
-for first in 0 3; do  # 6 turn-heavy and 6 speed-heavy clips, 3 per process (names and seeds as one process)
-    run_parallel "generate_turn_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_turn --turn-heavy --count 3 --first "$first" --seconds 300
-    run_parallel "generate_speed_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_speed --speed-heavy --count 3 --first "$first" --seconds 300
+# 4 turn-heavy, 4 speed-heavy and 6 running-manoeuvre clips, 2-3 per process (names and seeds as one process).
+# 200 s each: the whole motion dataset is built into the compiled training program, and 14 x 300 s clips plus
+# the repeated mocap (~820k frames) ran the VM's 32 GB of RAM out (exit 137, 2026-10-02). ~680k fits.
+CLIP_SECONDS=200
+run_parallel "generate_turn" python motion_matching.py generate --motions "$PWD/motions" --name mm_turn --turn-heavy --count 4 --seconds $CLIP_SECONDS
+run_parallel "generate_speed" python motion_matching.py generate --motions "$PWD/motions" --name mm_speed --speed-heavy --count 4 --seconds $CLIP_SECONDS
+for first in 0 3; do
+    run_parallel "generate_runman_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_runman --run-maneuvers --count 3 --first "$first" --seconds $CLIP_SECONDS
 done
 wait_parallel
 grep -h -E '^[{]' "$RESULTS"/generate_*.log
@@ -103,7 +108,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.6
 # Warm start only if a policy to start from was uploaded (a new observation layout trains from scratch).
 INIT_FROM=()
 if [ -f PPOJax_saved.pkl ]; then INIT_FROM=(--init-from PPOJax_saved.pkl); else echo "No PPOJax_saved.pkl uploaded: training from scratch"; fi
-TRAIN_MINUTES="${TRAIN_MINUTES:-120}"  # run 6 (speed): ~2 h (agreed 2026-10-02); the time budget decides
+TRAIN_MINUTES="${TRAIN_MINUTES:-120}"  # runs 6-7: ~2 h (agreed 2026-10-02); the time budget decides
 START=$(date +%s)
 set +e
 python _train_chunked.py athlete_tracking.yaml --results "$RESULTS" --max-minutes "$TRAIN_MINUTES" \
