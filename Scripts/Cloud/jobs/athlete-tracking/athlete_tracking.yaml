@@ -29,7 +29,14 @@
 #  - run 7 (running manoeuvres): run 6's best tracker (chunk 14) passes 5/6 M4 tests; every random-command
 #    fall was at running speed while turning or sidestepping, or after a big speed jump. Warm start from it;
 #    6 running-manoeuvre matcher clips (mm_runman_*, motion_matching.py --run-maneuvers) next to 4
-#    turn-heavy and 4 speed-heavy ones.
+#    turn-heavy and 4 speed-heavy ones;
+#  - run 8 (recovery): random pushes on the pelvis plus sensor noise during training (PushRandomizer,
+#    athlete_loco/robustness.py), so the tracker learns to get back on the reference. Same clips as run 7.
+#  - run 9 (100STYLE data): the falls left came at walk-to-run transitions - the mocap had nothing between
+#    1.5 and 2.5 m/s. 21 100STYLE clips (CC BY 4.0; jogging, walk-jog-run transitions, sidestep runs, 7 plain
+#    styles) fill it; the matcher clips are generated from the database with them (ATHLETE_MOTION_SET=100style).
+#  - run 10: run 9 continued (warm start from its final checkpoint), same data, 4 h of training: run 9 was
+#    still improving when its 2 h ran out (episode length 420 -> 721).
 defaults:
   - override hydra/job_logging: default
   - override hydra/launcher: basic
@@ -46,12 +53,21 @@ experiment:
         # (one of each, 6 matcher clips) learned walking and standing but fell within ~1.5 s on the turning,
         # start/stop and matcher clips: they got a few % of training each (short episodes). Hard material
         # now gets ~87% of the starts.
-        task: [walk, walk_mirror, stepinplace1, stepinplace2, stand, stand,
+        # Run 9: walk_mirror out (memory; mirrored walking still comes through the matcher clips) and the
+        # 100STYLE clips in, once each (their mirrors are in the matcher database).
+        task: [walk, stepinplace1, stepinplace2, stand, stand,
                run, run, run, run_mirror, run_mirror, run_mirror,
                walkturn, walkturn, walkturn_mirror, walkturn_mirror,
                random_walk, random_walk, random_walk_mirror, random_walk_mirror,
                mm_turn_0, mm_turn_1, mm_turn_2, mm_turn_3, mm_speed_0, mm_speed_1, mm_speed_2, mm_speed_3,
-               mm_runman_0, mm_runman_1, mm_runman_2, mm_runman_3, mm_runman_4, mm_runman_5]
+               mm_runman_0, mm_runman_1, mm_runman_2, mm_runman_3, mm_runman_4, mm_runman_5,
+               100style_neutral_fr, 100style_neutral_sr, 100style_neutral_tr1,
+               100style_rushed_fr, 100style_rushed_sr, 100style_rushed_tr1,
+               100style_angry_fr, 100style_angry_sr, 100style_angry_tr1,
+               100style_bigsteps_fr, 100style_bigsteps_sr, 100style_bigsteps_tr1,
+               100style_followed_fr, 100style_followed_sr, 100style_followed_tr1,
+               100style_crowdavoidance_fr, 100style_crowdavoidance_sr, 100style_crowdavoidance_tr1,
+               100style_proud_fr, 100style_proud_sr, 100style_proud_tr1]
   env_params:
     env_name: MjxAthleteReference
     use_mjwarp: True
@@ -65,6 +81,52 @@ experiment:
     horizon: 1000
     goal_type: GoalTrackInvariant
     invariant_obs: true
+    # Recovery training (run 8): pushes + sensor noise. LocoMuJoCo's randomizer reads every key below; the
+    # model randomizations (mass, friction, gravity, ...) stay off: per-world model changes are untested on
+    # MuJoCo Warp, and our contacts are explicit pairs its friction randomization wouldn't reach.
+    domain_randomization_type: PushRandomizer
+    domain_randomization_params:
+      push_interval_s: [2.0, 5.0]
+      push_duration_s: [0.1, 0.2]
+      push_impulse_ns: [0.0, 20.0]
+      add_joint_pos_noise: true
+      joint_pos_noise_scale: 0.01   # rad
+      add_joint_vel_noise: true
+      joint_vel_noise_scale: 0.1    # rad/s
+      add_gravity_noise: true
+      gravity_noise_scale: 0.02     # of the unit gravity direction (tilt sensing)
+      add_free_joint_lin_vel_noise: false
+      lin_vel_noise_scale: 0.0
+      add_free_joint_ang_vel_noise: false
+      ang_vel_noise_scale: 0.0
+      add_p_gains_noise: false
+      p_gains_noise_scale: 0.0
+      add_d_gains_noise: false
+      d_gains_noise_scale: 0.0
+      randomize_gravity: false
+      gravity_range: [9.81, 9.81]
+      randomize_geom_friction_tangential: false
+      geom_friction_tangential_range: [0.7, 0.7]
+      randomize_geom_friction_torsional: false
+      geom_friction_torsional_range: [0.005, 0.005]
+      randomize_geom_friction_rolling: false
+      geom_friction_rolling_range: [0.0001, 0.0001]
+      randomize_geom_damping: false
+      geom_damping_range: [0.0, 0.0]
+      randomize_geom_stiffness: false
+      geom_stiffness_range: [0.0, 0.0]
+      randomize_base_mass: false
+      base_mass_to_add_range: [0.0, 0.0]
+      randomize_com_displacement: false
+      com_displacement_range: [0.0, 0.0]
+      randomize_link_mass: false
+      link_mass_multiplier_range: {root_body: [1.0, 1.0], other_bodies: [1.0, 1.0]}
+      randomize_joint_friction_loss: false
+      joint_friction_loss_range: [0.0, 0.0]
+      randomize_joint_damping: false
+      joint_damping_range: [1.0, 1.0]
+      randomize_joint_armature: false
+      joint_armature_range: [0.01, 0.01]
     goal_params:
       visualize_goal: true
     control_type: DefaultControl

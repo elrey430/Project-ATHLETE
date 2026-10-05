@@ -9,6 +9,9 @@
 # Saved/Cloud/athlete-athlete-walk-0930-2014; run 2: run 1's tracker); the live files
 # (results/agent/) are this run's checkpoint: copied home after every chunk, and put back on the next VM
 # if a Spot VM is reclaimed, where training resumes from them.
+# Run 9 (100STYLE): also upload Scripts/MuJoCo/bvh.py, Scripts/MuJoCo/import_100style.py and the staged BVH
+# folder Saved/MotionData/100STYLE/100style_bvh (import_100style.py --stage <it>; 21 files, ~73 MB): if that
+# folder is here, its clips are fitted, mirrored and added to the matcher (ATHLETE_MOTION_SET=100style).
 # Budget: VM boot (~5 min) + motion (~10 min in parallel: fit 6 clips, generate 12 matcher clips) +
 # TRAIN_MINUTES (default 120) + a few min copying: run with -MaxRunDuration 150m. No video: recording it after training
 # ran out of GPU memory (2026-10-01); record on the PC from the checkpoint instead.
@@ -56,6 +59,11 @@ echo "MUJOCO_GL=${MUJOCO_GL:-unset} EGL vendor=${__EGL_VENDOR_LIBRARY_FILENAMES:
 echo "== Motion: mocap fitted to the athlete, plus motion-matched clips from random controller input =="
 export ATHLETE_MJCF="$PWD/athlete_reference.xml"
 export HF_HUB_DISABLE_SYMLINKS_WARNING=1
+# Foot placement of the LocoMuJoCo clips: "frame" (a foot on the floor in every frame, as runs 1-8; removes
+# running's flight phases) or "clip" (one floor height per clip; keeps them). See retarget_motion.py.
+FLOOR=clip  # run 9 (user, 2026-10-04): flight phases back in the run clip
+if [ -d 100style_bvh ]; then export ATHLETE_MOTION_SET=100style; fi  # the matcher's clips (motion_matching.py)
+echo "motion set: ${ATHLETE_MOTION_SET:-base}; LocoMuJoCo clip floor: $FLOOR"
 # In parallel (8 vCPUs): one after another this took ~25 min of a paid GPU VM (2026-10-01).
 run_parallel() {  # run_parallel <name> <command>...: start in the background, log to $RESULTS/<name>.log
     local name=$1; shift
@@ -74,7 +82,7 @@ wait_parallel() {  # fails (with the log tail) if any of them failed
 }
 PIDS=(); NAMES=()
 for clip in walk run walkturn random_walk stepinplace1 stepinplace2; do
-    run_parallel "retarget_$clip" python retarget_motion.py --source default --datasets "$clip" --out "$PWD/motions"
+    run_parallel "retarget_$clip" python retarget_motion.py --source default --datasets "$clip" --out "$PWD/motions" --floor "$FLOOR"
 done
 wait_parallel
 grep -h -E '"dataset"|"duration_s"|"root_speed' "$RESULTS"/retarget_*.log
@@ -83,11 +91,20 @@ for clip in walk run walkturn random_walk; do  # left/right mirrors: turns both 
 done
 wait_parallel
 grep -h -E '^[{]' "$RESULTS"/mirror_*.log
+if [ "${ATHLETE_MOTION_SET:-base}" = 100style ]; then  # 21 clips, ~25 min of motion: ~3 min on 8 cores
+    JAX_PLATFORMS=cpu python import_100style.py --data 100style_bvh --out "$PWD/motions" --jobs 8 > "$RESULTS/import_100style.log" 2>&1 ||
+        { echo "FAILED: import_100style"; tail -n 20 "$RESULTS/import_100style.log"; exit 1; }
+    grep -E '^[{]' "$RESULTS/import_100style.log"
+    CLIPS100=$(python -c "import motion_matching as m; print(' '.join(c for c in m.CLIPS_100STYLE if not c.endswith('_mirror')))")
+    JAX_PLATFORMS=cpu python mirror_motion.py --clips $CLIPS100 --motions "$PWD/motions" > "$RESULTS/mirror_100style.log" 2>&1 ||
+        { echo "FAILED: mirror_100style"; tail -n 20 "$RESULTS/mirror_100style.log"; exit 1; }
+fi
 python stand_motion.py --motions "$PWD/motions" | grep -E '^[{]'  # quiet standing (needs the mirror map)
 # 4 turn-heavy, 4 speed-heavy and 6 running-manoeuvre clips, 2-3 per process (names and seeds as one process).
-# 200 s each: the whole motion dataset is built into the compiled training program, and 14 x 300 s clips plus
-# the repeated mocap (~820k frames) ran the VM's 32 GB of RAM out (exit 137, 2026-10-02). ~680k fits.
-CLIP_SECONDS=200
+# The whole motion dataset is built into the compiled training program, and 14 x 300 s clips plus the
+# repeated mocap (~820k frames) ran the VM's 32 GB of RAM out (exit 137, 2026-10-02). ~680k fits (200 s).
+# Run 9 adds the 100STYLE clips once each (~152k) and drops walk_mirror (88k): 170 s keeps it at ~700k.
+CLIP_SECONDS=170
 run_parallel "generate_turn" python motion_matching.py generate --motions "$PWD/motions" --name mm_turn --turn-heavy --count 4 --seconds $CLIP_SECONDS
 run_parallel "generate_speed" python motion_matching.py generate --motions "$PWD/motions" --name mm_speed --speed-heavy --count 4 --seconds $CLIP_SECONDS
 for first in 0 3; do
@@ -108,7 +125,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.6
 # Warm start only if a policy to start from was uploaded (a new observation layout trains from scratch).
 INIT_FROM=()
 if [ -f PPOJax_saved.pkl ]; then INIT_FROM=(--init-from PPOJax_saved.pkl); else echo "No PPOJax_saved.pkl uploaded: training from scratch"; fi
-TRAIN_MINUTES="${TRAIN_MINUTES:-120}"  # runs 6-7: ~2 h (agreed 2026-10-02); the time budget decides
+TRAIN_MINUTES="${TRAIN_MINUTES:-235}"  # runs 6-9: ~2 h; run 10: ~4 h (user: max 4.5 h for the VM, 2026-10-04; setup ~24 min)
 START=$(date +%s)
 set +e
 python _train_chunked.py athlete_tracking.yaml --results "$RESULTS" --max-minutes "$TRAIN_MINUTES" \

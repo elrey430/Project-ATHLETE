@@ -6,7 +6,9 @@ Usage (LocoMuJoCo Python):
 The trained policy drives the athlete on CPU MuJoCo (the shared contact model, athlete_loco.env; --model
 full: MuJoCo's default solver, training: the GPU training settings), 2 ms physics / 10 ms control as in
 training, deterministic (the policy's mean action, input normalization frozen). The command is the
-controller input: forward speed, sideways speed and turning rate in the athlete's own frame.
+controller input: forward speed, sideways speed and turning rate in the athlete's own frame. It
+passes through the controller layer (controller.CommandShaper: human acceleration limits) as in the game;
+--no-shaping sends it unshaped. Measures compare against the command as given, not the shaped one.
   - Tracking policy (PPO, GoalTrajMimic): motion matching turns the command into a reference motion from
     the mocap and the policy follows it (Driver, motion_matching.py).
   - Command policy (AMP, GoalVelocityCommand): the command goes into its observation.
@@ -42,6 +44,7 @@ from omegaconf import OmegaConf
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import athlete_loco  # noqa: E402,F401
 import motion_matching  # noqa: E402
+from controller import CommandShaper  # noqa: E402
 from loco_mujoco import TaskFactory, algorithms  # noqa: E402
 
 # Checkpoints from the cloud trainer pickle its discriminator class as __main__.SelectedInputNet (the
@@ -72,16 +75,21 @@ class Driver:
         command into a reference motion, and the policy makes the athlete follow it (DReCon-style);
       - a COMMAND policy (goal GoalVelocityCommand, e.g. AMP): the command goes straight into its observation.
     reset(command) and step(obs, command) are the controller interface; run(schedule) drives a test.
+    shape_commands: the player's command goes through the controller layer (controller.CommandShaper:
+    human acceleration limits) before it reaches the athlete, as it would in the game.
     """
 
-    def __init__(self, agent_path, horizon_s, model="full"):
+    def __init__(self, agent_path, horizon_s, model="full", shape_commands=True):
         self.Algorithm = algorithms.AMPJax if "AMP" in Path(agent_path).name else algorithms.PPOJax
         self.agent_conf, agent_state = self.Algorithm.load_agent(agent_path)
         config = self.agent_conf.config
         params = OmegaConf.to_container(config.experiment.env_params, resolve=True)
         task_params = OmegaConf.to_container(config.experiment.task_factory.params, resolve=True)
-        for key in ("use_mjwarp", "nconmax", "njmax"):
+        for key in ("use_mjwarp", "nconmax", "njmax", "domain_randomization_params"):
             params.pop(key, None)
+        # Tests run the athlete as it is: no training randomization (pushes, sensor noise), which a
+        # checkpoint's training config may switch on (2026-10-04: it silently pushed the athlete in tests).
+        params["domain_randomization_type"] = "NoDomainRandomization"
         self.tracking = params.get("goal_type") in TRACKING_GOALS
         # Both use the athlete's contact model (athlete_loco.env.configure_contacts). "full": MuJoCo's default
         # solver; "training": the GPU training settings (few solver iterations: MjxAthleteReference) on CPU.
@@ -117,6 +125,7 @@ class Driver:
             self.start_offset = 0  # frames into the start clip where the next reset begins
         else:
             self.goal = self.env.obs_container["GoalVelocityCommand"]
+        self.shaper = CommandShaper() if shape_commands else None
         self.train_state = agent_state.train_state
         self.train_state.params["log_std"] = np.ones_like(self.train_state.params["log_std"]) * -np.inf
 
@@ -159,15 +168,21 @@ class Driver:
         self.matcher.position = pivot + turn @ (self.matcher.position - pivot)
         self.matcher.facing += angle
 
+    def _shaped(self, command):
+        """The command as the athlete receives it (through the controller layer, if on)."""
+        return self.shaper.step(command, self.env.dt) if self.shaper else tuple(command)
+
     def reset(self, command=(0.0, 0.0, 0.0)):
+        if self.shaper:
+            self.shaper.reset()  # the athlete starts standing
         if self.tracking:
             self.rows = {}
             start = self.matcher.db.first_frame(motion_matching.START_CLIP) + self.start_offset
             self._write_reference(0, *self.matcher.reset(frame=start))  # the athlete starts in the reference's first pose
             for row in range(1, self.lead + 1):  # and the policy sees `lead` frames of the future
-                self._write_reference(row, *self.matcher.step(command))
+                self._write_reference(row, *self.matcher.step(self._shaped(command)))
         else:
-            self.goal.external_command = tuple(command)
+            self.goal.external_command = self._shaped(command)
         return self.env.reset()
 
     def step(self, obs, command):
@@ -187,9 +202,9 @@ class Driver:
             else:
                 self.matcher.follow(q[:2], motion_matching.heading(q[3:7]))
             row = (now + 1 + self.lead) % self.trajectory_length
-            self._write_reference(row, *self.matcher.step(command))
+            self._write_reference(row, *self.matcher.step(self._shaped(command)))
         else:
-            self.goal.external_command = tuple(command)
+            self.goal.external_command = self._shaped(command)
         self.rng, key = jax.random.split(self.rng)
         action, self.train_state = self.act(self.train_state, obs, key)
         obs, _, absorbing, _, _ = env.step(jnp.atleast_2d(action))
@@ -283,12 +298,14 @@ def main():
     parser.add_argument("--trials", type=int, default=5, help=f"trials per test (at most {len(TRIAL_OFFSETS_FRAMES)})")
     parser.add_argument("--need", type=int, default=4, help="trials that must pass for a test to pass")
     parser.add_argument("--out", default=None)
+    parser.add_argument("--no-shaping", action="store_true",
+                        help="send the test commands to the athlete unshaped (no controller layer)")
     parser.add_argument("--model", choices=["full", "training"], default="full",
                         help="full: MuJoCo's default solver; training: the GPU training settings (both: the shared contact model)")
     args = parser.parse_args()
     trials = min(args.trials, len(TRIAL_OFFSETS_FRAMES))
     need = min(args.need, trials)
-    driver = Driver(args.agent, horizon_s=22.0, model=args.model)
+    driver = Driver(args.agent, horizon_s=22.0, model=args.model, shape_commands=not args.no_shaping)
     dt = driver.env.dt
     report = {}
 
@@ -320,7 +337,12 @@ def main():
         falls += fell
         speed = smooth([r["forward"] for r in recs])
         wanted = np.array([r["command"][0] for r in recs])
-        settled = np.array([(i * dt) % 3.0 > 1.5 for i in range(len(recs))])  # second half of each command
+        # The second half of each command. (Until 2026-10-05 this was (t % 3 s) > 1.5 s: with the 2 s opening
+        # stand those windows straddled every command change, so it measured the first second of each new
+        # command, mid-acceleration: 0.69-0.80 m/s for every tracker, the criterion unreachable.)
+        starts = np.cumsum([0.0] + [seconds for seconds, _ in schedule])
+        segment = np.searchsorted(starts, np.arange(len(recs)) * dt, side="right") - 1
+        settled = (np.arange(len(recs)) * dt - starts[segment]) > 0.5 * np.array([schedule[s][0] for s in segment])
         errors.append(float(np.mean(np.abs(speed - wanted)[settled])) if settled.any() else np.nan)
     mean_error = round(float(np.nanmean(errors)), 3)
     passed = falls <= 1 and mean_error < 0.4

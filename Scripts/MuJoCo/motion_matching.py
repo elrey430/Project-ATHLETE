@@ -39,6 +39,7 @@ DReCon's recipe.
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -49,14 +50,33 @@ from scipy.spatial.transform import Rotation
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # athlete_loco (the athlete's contact model)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MOTIONS = PROJECT_ROOT / "Saved" / "MuJoCo" / "motions"
+# ATHLETE_MOTIONS: another motions folder (e.g. one built like a training run's, to test its tracker locally).
+DEFAULT_MOTIONS = Path(os.environ.get("ATHLETE_MOTIONS", PROJECT_ROOT / "Saved" / "MuJoCo" / "motions"))
 FREQUENCY = 100.0  # Hz: the clips' rate and the policy's control rate
 DT = 1.0 / FREQUENCY
 # The mocap fitted to the athlete, plus left/right mirrored copies of the moving clips (mirror_motion.py):
 # turns both ways in equal measure (the turning clip alone turns left on average).
 CLIPS = ("walk", "run", "walkturn", "random_walk", "stepinplace1", "stepinplace2",
          "walk_mirror", "run_mirror", "walkturn_mirror", "random_walk_mirror")
+# 100STYLE clips (import_100style.py; Docs/MotionData.md): walk-jog-run transitions, jogging, sidestep runs.
+# Used when ATHLETE_MOTION_SET=100style - a tracker trained without them falls on them (20/20 random-test
+# falls for runs 7 and 8, 2026-10-04), so the set must match the tracker's training data.
+STYLES_100 = ("neutral", "rushed", "angry", "bigsteps", "followed", "crowdavoidance", "proud")
+CLIPS_100STYLE = tuple(f"100style_{style}_{kind}{mirror}" for style in STYLES_100 for kind in ("fr", "sr", "tr1")
+                       for mirror in ("", "_mirror"))
+MOTION_SET = os.environ.get("ATHLETE_MOTION_SET", "base")
+if MOTION_SET == "100style":
+    CLIPS = CLIPS + CLIPS_100STYLE
+elif MOTION_SET != "base":
+    raise ValueError(f"ATHLETE_MOTION_SET={MOTION_SET!r}: expected 'base' or '100style'")
 START_CLIP = "stepinplace1"
+# Time-warped copies, {clip: (playback rates)}: the mocap walks at ~1-1.5 m/s and runs at ~2.5-3 m/s, with
+# nothing between, so asked for 2 m/s the matcher jumped from a walk straight into a full run and the athlete,
+# still at ~1.3 m/s, fell trying to catch the reference (2026-10-04). Rates < 1 slow a clip down, > 1 speed
+# it up; the copies are named "<clip>@<rate>". Off: with the run 7 tracker, run x0.7/0.85 (+ walk x1.25)
+# filled the gap but random-test falls rose from 4 to 12-14 of 20 - the tracker never trained on warped
+# motion. Worth retrying only with a tracker trained on the same database.
+SPEED_VARIANTS = {}
 FOOT_SITES = ("left_foot_mimic", "right_foot_mimic")
 FUTURE_FRAMES = (33, 67, 100)  # trajectory samples 0.33 / 0.67 / 1.0 s ahead
 # Tuned 2026-10-01 on the kinematic check below (Holden's defaults 0.75/1/1/1/1.5 never left the first steps
@@ -67,6 +87,12 @@ SEARCH_INTERVAL_FRAMES = 10
 IGNORE_SURROUNDING_FRAMES = 20  # candidates this close ahead of the playing frame (same clip) are skipped,
 IGNORE_BEHIND_FRAMES = 100      # and this far behind it: never replay the moment just played (it loops)
 JUMP_MARGIN = 2.0               # jump only if the best frame's cost is this much below playing on (fewer, cleaner jumps: 6 -> 1.4/s walking)
+# Against thrashing (2026-10-04): in the second before a random-command fall the matcher jumped ~9 times and
+# the reference pelvis accelerated at ~18 m/s^2 (vs ~3.5 jumps and ~5.5 m/s^2 in ordinary seconds); the
+# athlete fell following a jerky, implausible target. A 20-frame hold halved the random-test falls (run 7
+# tracker: 9 -> 4 of 20); 35 frames no better and the run test began to fail; JUMP_MARGIN 3 worse (6).
+MIN_JUMP_INTERVAL_FRAMES = 20   # after a jump, play on at least this long before the next (clip ends excepted)
+COMMAND_CHANGE_SEARCH = 0.25    # a command change this large (m/s or rad/s) since the last search searches at once
 BLEND_HALFLIFE_S = 0.1
 CONTROL_HALFLIFE_S = 0.25
 N_OFFSETS_EXTRA = 1 + 3 + 2 + 1  # height, tilt (rotation vector), pelvis velocity xy, turning rate
@@ -124,6 +150,26 @@ class FootGround:
         return self._lowest(self.model, self.data)
 
 
+def time_warp(qpos, qvel, feet, splits, rate):
+    """A clip played at `rate` x its speed, resampled to FREQUENCY. Each range [a, b) of `splits` is warped
+    on its own (ranges are separate takes). Returns (qpos, qvel, feet, new splits)."""
+    out_q, out_v, out_f, cuts = [], [], [], [0]
+    for a, b in zip(splits[:-1], splits[1:]):
+        t = np.arange(0.0, b - a - 1, rate)  # source frame (fractional) for each new frame
+        i = np.minimum(t.astype(int), b - a - 2)
+        w = (t - i)[:, None]
+        q0, q1 = qpos[a + i], qpos[a + i + 1]
+        q = q0 + (q1 - q0) * w
+        r0, r1 = Rotation.from_quat(q0[:, [4, 5, 6, 3]]), Rotation.from_quat(q1[:, [4, 5, 6, 3]])
+        rel = (r0.inv() * r1).as_rotvec()
+        q[:, 3:7] = (r0 * Rotation.from_rotvec(rel * w)).as_quat()[:, [3, 0, 1, 2]]  # slerp, MuJoCo wxyz
+        out_q.append(q)
+        out_v.append((qvel[a + i] + (qvel[a + i + 1] - qvel[a + i]) * w) * rate)
+        out_f.append(feet[a + i] + (feet[a + i + 1] - feet[a + i]) * w[:, :, None])
+        cuts.append(cuts[-1] + len(t))
+    return np.concatenate(out_q), np.concatenate(out_v), np.concatenate(out_f), cuts
+
+
 class MotionDatabase:
     """The fitted mocap clips, with per-frame playback quantities and normalized matching features."""
 
@@ -136,14 +182,19 @@ class MotionDatabase:
             assert abs(float(data["frequency"]) - FREQUENCY) < 1e-6, f"{clip}: expected {FREQUENCY} Hz"
             site_names = [str(s) for s in data["site_names"]]
             foot_ids = [site_names.index(s) for s in FOOT_SITES]
-            qpos.append(np.asarray(data["qpos"], np.float64))
-            qvel.append(np.asarray(data["qvel"], np.float64))
-            feet.append(np.asarray(data["site_xpos"], np.float64)[:, foot_ids])
+            clip_qpos = np.asarray(data["qpos"], np.float64)
+            clip_qvel = np.asarray(data["qvel"], np.float64)
+            clip_feet = np.asarray(data["site_xpos"], np.float64)[:, foot_ids]
             splits = np.asarray(data["split_points"]).tolist()
-            for a, b in zip(splits[:-1], splits[1:]):
-                self.ranges.append((start + a, start + b))
-                self.range_names.append(clip)
-            start += len(data["qpos"])
+            for rate in (1.0, *SPEED_VARIANTS.get(clip, ())):
+                q, v, f, cuts = (clip_qpos, clip_qvel, clip_feet, splits) if rate == 1.0 else                     time_warp(clip_qpos, clip_qvel, clip_feet, splits, rate)
+                qpos.append(q)
+                qvel.append(v)
+                feet.append(f)
+                for a, b in zip(cuts[:-1], cuts[1:]):
+                    self.ranges.append((start + a, start + b))
+                    self.range_names.append(clip if rate == 1.0 else f"{clip}@{rate:g}")
+                start += len(q)
         qpos, qvel, feet = np.concatenate(qpos), np.concatenate(qvel), np.concatenate(feet)
         self.n_frames = len(qpos)
         self.range_of = np.zeros(self.n_frames, int)
@@ -240,6 +291,7 @@ class MotionMatcher:
         self.offset = np.zeros(self.n_joints + N_OFFSETS_EXTRA)
         self.offset_rate = np.zeros_like(self.offset)
         self.command, self.since_search, self.jumps = None, SEARCH_INTERVAL_FRAMES, 0
+        self.searched_command, self.since_jump = None, MIN_JUMP_INTERVAL_FRAMES
         # The controller's own movement state (heading frame), approaching the command; the desired trajectory
         # starts from it, not from the animation (which lags mid-blend and would pull the search back).
         self.control_velocity = self.db.pelvis_velocity[self.frame, :2].copy()
@@ -294,7 +346,9 @@ class MotionMatcher:
         """Advance one frame toward the command (forward m/s, sideways m/s, turning rad/s, own frame)."""
         db = self.db
         command = np.asarray(command, float)
-        changed = self.command is None or np.abs(command - self.command).max() > 1e-6
+        # Only a real change of intent searches early: a command ramping smoothly (the controller layer
+        # shapes it every frame) made the matcher search, and often jump, on every frame.
+        changed = self.searched_command is None or np.abs(command - self.searched_command).max() > COMMAND_CHANGE_SEARCH
         self.command = command
         lag = np.exp(-np.log(2.0) * DT / CONTROL_HALFLIFE_S)
         self.control_velocity = command[:2] + (self.control_velocity - command[:2]) * lag
@@ -302,8 +356,11 @@ class MotionMatcher:
         next_frame = self.frame + 1
         at_end = next_frame >= db.ranges[db.range_of[self.frame]][1]
         self.since_search += 1
-        if at_end or changed or self.since_search >= SEARCH_INTERVAL_FRAMES:
+        self.since_jump += 1
+        may_jump = self.since_jump >= MIN_JUMP_INTERVAL_FRAMES
+        if at_end or ((changed or self.since_search >= SEARCH_INTERVAL_FRAMES) and may_jump):
             self.since_search = 0
+            self.searched_command = command
             # Jump only if a frame elsewhere beats simply playing on (Holden 2020); never back into the
             # moment just played, which loops (measured: stuck re-starting the same step).
             query = self._query(command)
@@ -311,6 +368,7 @@ class MotionMatcher:
             if at_end or not db.valid[next_frame] or best_cost < db.cost(next_frame, query) - JUMP_MARGIN:
                 self._jump(best)
                 next_frame = best
+                self.since_jump = 0
         self.frame = next_frame
         self.offset, self.offset_rate = decay_offset(self.offset, self.offset_rate, BLEND_HALFLIFE_S, DT)
         pose = self._pose(self.frame, self.offset, self.offset_rate)

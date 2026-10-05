@@ -9,6 +9,7 @@ from .env import AthleteReference, MjxAthleteReference
 from .invariant import GoalTrackInvariant
 from .lookahead import GoalTrajMimicLookahead
 from .rewards import MimicHeadingReward
+from .robustness import PushRandomizer
 
 AthleteReference.register()
 MjxAthleteReference.register()
@@ -17,3 +18,4 @@ VelocityCommandReward.register()
 GoalTrajMimicLookahead.register()
 MimicHeadingReward.register()
 GoalTrackInvariant.register()
+PushRandomizer.register()
