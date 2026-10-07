@@ -25,6 +25,9 @@ public class AthleteTests : ModuleRules
 			"LearningAgentsTraining",
 			"LearningTraining", // LearningCore's training layer: the trainer headers include it
 			"XmlParser", // reads back the MuJoCo model export
+			"AthleteTracker",
+			"MuJoCo",
+			"Json",
 		});
 	}
 }
