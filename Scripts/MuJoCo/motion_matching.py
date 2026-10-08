@@ -402,7 +402,7 @@ class MotionMatcher:
             self.facing = yaw + np.sign(error) * max_yaw
 
 
-def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False, run_maneuvers=False):
+def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False, run_maneuvers=False, test_pattern=False):
     """
     Controller input like a player's: held 1-4 s; stand, walk, run, turn, sidestep.
     turn_heavy: for training turns (2026-10-01: the tracker couldn't follow them). 80% of commands turn,
@@ -413,7 +413,19 @@ def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False, run_maneu
     >= 1.9 m/s while turning or sidestepping, or after a big speed jump). 70% of commands run at 1.8..3 m/s,
     turning (60%, up to 1.2 rad/s) and/or sidestepping (40%, up to 0.5 m/s); the rest are any speed or a
     stand, so the speed jumps between them are large. Held 1.5-3.5 s.
+    test_pattern: the random-command acceptance test's own distribution (locomotion_tests.py): a 2 s stand,
+    then a new command every 3 s: stand 15%; forward 0..3 m/s; sideways +-0.5 m/s 30% of the time; turning
+    +-1.2 rad/s half the time. (2026-10-07: no training clip matched it.)
     """
+    if test_pattern:
+        schedule, t = [(2.0, (0.0, 0.0, 0.0))], 2.0
+        while t < seconds:
+            stand = rng.random() < 0.15
+            command = (0.0, 0.0, 0.0) if stand else (rng.uniform(0.0, 3.0), rng.uniform(-0.5, 0.5) * (rng.random() < 0.3),
+                                                     rng.uniform(-1.2, 1.2) * (rng.random() < 0.5))
+            schedule.append((3.0, command))
+            t += 3.0
+        return schedule
     if run_maneuvers:
         schedule, t = [], 0.0
         while t < seconds:
@@ -446,12 +458,17 @@ def random_commands(rng, seconds, turn_heavy=False, speed_heavy=False, run_maneu
     return schedule
 
 
-def play(matcher, schedule):
+def play(matcher, schedule, shaped=False):
+    """shaped: the commands pass through the controller layer (controller.CommandShaper), as at run time."""
     matcher.reset()
+    shaper = None
+    if shaped:
+        from controller import CommandShaper
+        shaper = CommandShaper()
     qpos, qvel, commands = [], [], []
     for hold, command in schedule:
         for _ in range(int(round(hold * FREQUENCY))):
-            q, v = matcher.step(command)
+            q, v = matcher.step(shaper.step(command, DT) if shaper else command)
             qpos.append(q)
             qvel.append(v)
             commands.append(command)
@@ -499,7 +516,8 @@ def kinematic_check(database):
     return report
 
 
-def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed_heavy=False, run_maneuvers=False):
+def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed_heavy=False, run_maneuvers=False,
+             test_pattern=False, shaped=False):
     """
     One continuous clip the matcher makes from random controller input, saved for training next to the
     mocap. (One clip per file: LocoMuJoCo's trajectory extender overran its buffer with several.)
@@ -510,7 +528,9 @@ def generate(database, motions_dir, name, seconds, seed, turn_heavy=False, speed
     model = LocoEnv.registered_envs[ENV_NAME]()._model
     rng = np.random.default_rng(seed)
     matcher = MotionMatcher(database)
-    qpos, _, _ = play(matcher, random_commands(rng, seconds, turn_heavy, speed_heavy, run_maneuvers))
+    # shaped: as the athlete gets commands at run time (tests, Unreal). Until 2026-10-07 every training clip
+    # was made from unshaped commands: sharper transitions than the tracker ever meets when played.
+    qpos, _, _ = play(matcher, random_commands(rng, seconds, turn_heavy, speed_heavy, run_maneuvers, test_pattern), shaped)
     # Velocities from the positions themselves (central differences, MuJoCo's own differencing), as
     # retarget_motion.py does: consistent with qpos, jumps and blends included. Ends dropped.
     qvel = np.zeros((len(qpos) - 2, model.nv))
@@ -534,6 +554,8 @@ def main():
     parser.add_argument("--turn-heavy", action="store_true", help="mostly turning commands (random_commands)")
     parser.add_argument("--speed-heavy", action="store_true", help="mostly straight, varied speeds (random_commands)")
     parser.add_argument("--run-maneuvers", action="store_true", help="running turns, sidesteps and speed jumps (random_commands)")
+    parser.add_argument("--test-pattern", action="store_true", help="the random-command test's distribution (random_commands)")
+    parser.add_argument("--shaped", action="store_true", help="commands through the controller layer, as at run time")
     args = parser.parse_args()
     database = MotionDatabase(args.motions)
     print(f"motion database: {database.n_frames} frames ({database.n_frames * DT / 60:.1f} min), "
@@ -544,7 +566,7 @@ def main():
         for i in range(args.first, args.first + args.count):
             name = args.name if args.count == 1 and args.first == 0 else f"{args.name}_{i}"
             print(json.dumps(generate(database, args.motions, name, args.seconds, args.seed + i, args.turn_heavy, args.speed_heavy,
-                                         args.run_maneuvers)), flush=True)
+                                         args.run_maneuvers, args.test_pattern, args.shaped)), flush=True)
 
 
 if __name__ == "__main__":

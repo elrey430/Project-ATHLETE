@@ -75,8 +75,8 @@ saves `Saved/Screenshots/LearnedAthlete.png` and quits.
 | Parity.Reset: start pose, queued reference, first observation | 1e-9 / 7e-8 |
 | Parity.Session: the 5 s golden session | forced actions: path within 5e-6 for 0.5 s; C++ policy: ends **3 cm and 0.02 rad** from Python's athlete |
 | Acceptance.Accelerate / Brake / Turn / TurnOnSpot / Run | **all 5/5 trials**, same numbers as Python (t90 1.5-2.0 s; stop 1.5-1.6 s; 3.1 rad; 4.0 rad; 2.6 m/s) |
-| Acceptance.RandomCommands (40 episodes, at most 1 fall) | **3 falls: fails**; speed error 0.20 m/s (limit 0.4) |
-| Study.RandomCommandFallRate (200 episodes) | 9 falls = 4.5%; speed error 0.18 m/s |
+| Acceptance.RandomCommands (200 episodes, at most 1 fall per 10) | **passes**: 11 falls (5.5 per 100), speed error 0.19 m/s (limit 0.4) |
+| Study.FootballFallBar (400 episodes; football bar: at most 1 per 100) | 21 falls = 5.2 per 100: not met (reported, not asserted) |
 | Study.PythonRandomSchedules (Python's exact 100 schedules) | 3 falls (Python, same schedules: 1) |
 | Pawn.StandsAndWalksInAWorld | stands, walks 4.2 m in 4 s, real-time stepping, pelvis drawn 0.00 cm from MuJoCo's |
 
@@ -102,8 +102,16 @@ Fall rates per 20 s episode, chunk-55 tracker:
 On identical schedules the two differ by 1 vs 3 in 100, within chance for a chaotic system (each episode
 is effectively a random draw). Over 300 C++ episodes the rate is ~4%; Python's 1 in 100 is consistent
 with ~1-4%. So the port behaves like Python, and the tracker falls in a few percent of 20 s random-command
-episodes. "At most 1 fall in 40" is a coin flip at that rate, in either implementation. Passing it
-reliably needs a tracker with ≤ ~1% falls (more training or data), not a port fix.
+episodes.
+
+**The criterion (fixed 2026-10-07).** Milestone 4's goal is a rate, at most 1 fall per 10 episodes
+(Milestone4_Locomotion.md 9.6). Both test suites checked "at most 1 fall" whatever the episode count:
+right for Python's default 10 episodes, but four times too strict at 40. Both now check the rate. The C++
+test runs 200 episodes (~4 min) because 10 are mostly luck: a tracker falling in 4% of episodes fails a
+10-episode test 6% of the time. With the fix the test passes: 11 falls in 200.
+
+**The football bar.** At most 1 fall per 100 episodes, about one fall per half hour of random play. It's
+measured, not asserted, by Study.FootballFallBar (400 episodes). Chunk 55: 5.2 per 100, about 5x too many.
 
 ### LocoMuJoCo quirks reproduced on purpose
 

@@ -3,6 +3,9 @@
 #include "AthleteTrackerPolicy.h"
 
 #include "AthleteTrackerBundle.h"
+#include "HAL/PlatformMisc.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 namespace
 {
@@ -13,6 +16,21 @@ namespace
 		{
 			OutError = FString::Printf(TEXT("Bundle has no float32 array %s"), Name);
 			return false;
+		}
+		// ATHLETE_POLICY_DIR: another checkpoint's policy arrays (export_unreal_bundle.py --policy-only), same
+		// shapes, used instead of the bundle's: compares checkpoints without re-exporting the whole bundle.
+		const FString Override = FPlatformMisc::GetEnvironmentVariable(TEXT("ATHLETE_POLICY_DIR"));
+		if (!Override.IsEmpty())
+		{
+			TArray<uint8> Bytes;
+			if (!FFileHelper::LoadFileToArray(Bytes, *FPaths::Combine(Override, FString(Name) + TEXT(".bin"))) || Bytes.Num() != Array->Bytes.Num())
+			{
+				OutError = FString::Printf(TEXT("ATHLETE_POLICY_DIR=%s: %s.bin missing or a different size"), *Override, Name);
+				return false;
+			}
+			Out.SetNumUninitialized(Bytes.Num() / sizeof(float));
+			FMemory::Memcpy(Out.GetData(), Bytes.GetData(), Bytes.Num());
+			return true;
 		}
 		Out.SetNumUninitialized(static_cast<int32>(Array->Num()));
 		FMemory::Memcpy(Out.GetData(), Array->Data<float>(), Array->Bytes.Num());

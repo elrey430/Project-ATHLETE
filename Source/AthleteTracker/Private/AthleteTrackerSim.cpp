@@ -4,6 +4,7 @@
 
 #include "AthleteTrackerBundle.h"
 #include "AthleteTrackerMath.h"
+#include "HAL/PlatformMisc.h"
 
 THIRD_PARTY_INCLUDES_START
 #include <mujoco/mujoco.h>
@@ -69,6 +70,13 @@ bool FAthleteTrackerSim::Initialize(TSharedPtr<const FAthleteTrackerBundle> InBu
 	const FJsonObject& ShaperConstants = *C.GetObjectField(TEXT("shaper"));
 	Shaper.Configure(ShaperConstants.GetNumberField(TEXT("forward_acceleration")), ShaperConstants.GetNumberField(TEXT("forward_deceleration")),
 		ShaperConstants.GetNumberField(TEXT("sideways_acceleration")), ShaperConstants.GetNumberField(TEXT("turn_acceleration")));
+	// ATHLETE_SHAPER=acceleration,deceleration,sideways,turn: other controller-layer limits (experiments only).
+	const FString ShaperOverride = FPlatformMisc::GetEnvironmentVariable(TEXT("ATHLETE_SHAPER"));
+	TArray<FString> Limits;
+	if (ShaperOverride.ParseIntoArray(Limits, TEXT(",")) == 4)
+	{
+		Shaper.Configure(FCString::Atod(*Limits[0]), FCString::Atod(*Limits[1]), FCString::Atod(*Limits[2]), FCString::Atod(*Limits[3]));
+	}
 	for (const int32 Site : SiteIds)
 	{
 		SiteBodies.Add(M->site_bodyid[Site]);

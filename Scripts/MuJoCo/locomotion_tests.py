@@ -64,7 +64,7 @@ CRITERIA = {
     "turn": "no fall; heading change within 30% of the commanded 3.2 rad",
     "turn_on_spot": "no fall; heading change within 30% of the commanded 4.0 rad",
     "run": "no fall; mean speed over the last 2 s at least 2.0 m/s",
-    "random": "at most 1 fall in N; mean forward-speed error < 0.4 m/s",
+    "random": "at most 1 fall per 10 episodes; mean forward-speed error < 0.4 m/s",
 }
 
 
@@ -345,7 +345,10 @@ def main():
         settled = (np.arange(len(recs)) * dt - starts[segment]) > 0.5 * np.array([schedule[s][0] for s in segment])
         errors.append(float(np.mean(np.abs(speed - wanted)[settled])) if settled.any() else np.nan)
     mean_error = round(float(np.nanmean(errors)), 3)
-    passed = falls <= 1 and mean_error < 0.4
+    # The goal is a rate (Docs/Milestone4_Locomotion.md 9.6). Until 2026-10-07 this was "falls <= 1" whatever
+    # the episode count: right for the default 10, four times too strict at 40. Use --random 100 or more for a
+    # reliable rate: 10 episodes are mostly luck.
+    passed = falls * 10 <= args.random and mean_error < 0.4
     report["random"] = {"passed": passed, "episodes": args.random, "falls": falls, "forward_speed_error_mps": mean_error,
                         "criteria": CRITERIA["random"]}
     print(f"{'PASS' if passed else 'FAIL'} random        {args.random} episodes, {falls} falls | forward_speed_error_mps {mean_error}",

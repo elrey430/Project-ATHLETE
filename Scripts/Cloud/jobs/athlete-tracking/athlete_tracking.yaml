@@ -37,6 +37,9 @@
 #    styles) fill it; the matcher clips are generated from the database with them (ATHLETE_MOTION_SET=100style).
 #  - run 10: run 9 continued (warm start from its final checkpoint), same data, 4 h of training: run 9 was
 #    still improving when its 2 h ran out (episode length 420 -> 721).
+#  - run 11 (data only): run 10's chunk 55 continued with clips in the random-command test's own pattern
+#    (mm_test_0..3) and every matcher clip made from shaped commands, as at run time. Football bar: 5.2 falls
+#    per 100 random episodes, half of them hard stops from a run.
 defaults:
   - override hydra/job_logging: default
   - override hydra/launcher: basic
@@ -61,6 +64,7 @@ experiment:
                random_walk, random_walk, random_walk_mirror, random_walk_mirror,
                mm_turn_0, mm_turn_1, mm_turn_2, mm_turn_3, mm_speed_0, mm_speed_1, mm_speed_2, mm_speed_3,
                mm_runman_0, mm_runman_1, mm_runman_2, mm_runman_3, mm_runman_4, mm_runman_5,
+               mm_test_0, mm_test_1, mm_test_2, mm_test_3,
                100style_neutral_fr, 100style_neutral_sr, 100style_neutral_tr1,
                100style_rushed_fr, 100style_rushed_sr, 100style_rushed_tr1,
                100style_angry_fr, 100style_angry_sr, 100style_angry_tr1,

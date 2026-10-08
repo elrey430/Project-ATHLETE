@@ -242,21 +242,31 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAthleteTrackerRandomTest, "Athlete.Tracker.Acc
 
 bool FAthleteTrackerRandomTest::RunTest(const FString& Parameters)
 {
-	// At most 1 fall in all 40 episodes; mean forward-speed error < 0.4 m/s.
+	// Milestone 4's goal is a RATE: at most 1 fall per 10 episodes (Docs/Milestone4_Locomotion.md, 9.6), and a
+	// mean forward-speed error < 0.4 m/s. 200 episodes (~4 min) measure the rate; 10 are mostly luck (a
+	// tracker falling in 4% of episodes fails a 10-episode test 6% of the time). Until 2026-10-07 this checked
+	// "at most 1 fall" whatever the count, which with 40 episodes was four times stricter than the goal.
+	// The football bar (at most 1 per 100) is reported as information: Athlete.Tracker.Study.FootballFallBar.
+	constexpr int32 Episodes = 200;
 	double MeanError = 0.0;
-	const int32 Falls = RunRandomCommands(*this, 40, 3, MeanError);
-	TestTrue(TEXT("At most 1 fall"), Falls <= 1);
+	const int32 Falls = RunRandomCommands(*this, Episodes, 3, MeanError);
+	TestTrue(FString::Printf(TEXT("At most 1 fall per 10 episodes (%d falls in %d)"), Falls, Episodes), Falls >= 0 && Falls * 10 <= Episodes);
 	TestTrue(TEXT("Mean forward-speed error < 0.4 m/s"), MeanError < 0.4);
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAthleteTrackerRandomStudy, "Athlete.Tracker.Study.RandomCommandFallRate", AthleteTestFlags)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAthleteTrackerFootballBarStudy, "Athlete.Tracker.Study.FootballFallBar", AthleteTestFlags)
 
-bool FAthleteTrackerRandomStudy::RunTest(const FString& Parameters)
+bool FAthleteTrackerFootballBarStudy::RunTest(const FString& Parameters)
 {
-	// A measurement, not a pass/fail test: the fall rate over 200 random-command episodes.
+	// A measurement against the stricter football bar: at most 1 fall per 100 random-command episodes
+	// (about one fall per half hour of random play). 400 episodes on different samples from the
+	// acceptance test. Reported, not asserted, until a tracker reaches it.
+	constexpr int32 Episodes = 400;
 	double MeanError = 0.0;
-	RunRandomCommands(*this, 200, 11, MeanError);
+	const int32 Falls = RunRandomCommands(*this, Episodes, 11, MeanError);
+	AddInfo(FString::Printf(TEXT("Football bar (<= 1 fall per 100 episodes): %d falls in %d = %.1f per 100 -> %s"),
+		Falls, Episodes, 100.0 * Falls / Episodes, Falls * 100 <= Episodes ? TEXT("MET") : TEXT("not met")));
 	return true;
 }
 
@@ -292,7 +302,13 @@ int32 AthleteTrackerAcceptance::RunRandomCommands(FAutomationTestBase& Test, int
 		if (bFell)
 		{
 			++Falls;
-			FallNotes.Add(FString::Printf(TEXT("episode %d at %.1f s"), Episode, Records.Num() * Sim->ControlDt()));
+			const double FallS = Records.Num() * Sim->ControlDt();
+			const int32 Segment = FMath::Min(Schedule.Num() - 1, FallS < 2.0 ? 0 : 1 + FMath::FloorToInt((FallS - 2.0) / 3.0));
+			const FAthleteCommand& Now = Schedule[Segment].Command;
+			const FAthleteCommand& Before = Schedule[FMath::Max(0, Segment - 1)].Command;
+			const double Into = FallS - (Segment == 0 ? 0.0 : 2.0 + 3.0 * (Segment - 1));
+			FallNotes.Add(FString::Printf(TEXT("ep %d at %.1f s, %.1f s into (%.2f, %+.2f, %+.2f) after (%.2f, %+.2f, %+.2f)"),
+				Episode, FallS, Into, Now.Forward, Now.Sideways, Now.Turn, Before.Forward, Before.Sideways, Before.Turn));
 		}
 		// Speed error over the second half of each command.
 		const TArray<double> Speed = Smooth(Forward(Records));

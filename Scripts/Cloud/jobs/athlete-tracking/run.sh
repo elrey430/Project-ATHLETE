@@ -104,11 +104,19 @@ python stand_motion.py --motions "$PWD/motions" | grep -E '^[{]'  # quiet standi
 # The whole motion dataset is built into the compiled training program, and 14 x 300 s clips plus the
 # repeated mocap (~820k frames) ran the VM's 32 GB of RAM out (exit 137, 2026-10-02). ~680k fits (200 s).
 # Run 9 adds the 100STYLE clips once each (~152k) and drops walk_mirror (88k): 170 s keeps it at ~700k.
-CLIP_SECONDS=170
-run_parallel "generate_turn" python motion_matching.py generate --motions "$PWD/motions" --name mm_turn --turn-heavy --count 4 --seconds $CLIP_SECONDS
-run_parallel "generate_speed" python motion_matching.py generate --motions "$PWD/motions" --name mm_speed --speed-heavy --count 4 --seconds $CLIP_SECONDS
+# Run 11 adds 4 clips in the random-command test's own pattern (mm_test; half the remaining falls were hard
+# stops from a run, often turning) and makes every clip from SHAPED commands (--shaped: through the controller
+# layer, as at run time; until now training clips had sharper transitions than the athlete ever meets).
+# 18 clips x 150 s: ~737k frames.
+CLIP_SECONDS=150
+SHAPED=--shaped
+run_parallel "generate_turn" python motion_matching.py generate --motions "$PWD/motions" --name mm_turn --turn-heavy --count 4 --seconds $CLIP_SECONDS $SHAPED
+run_parallel "generate_speed" python motion_matching.py generate --motions "$PWD/motions" --name mm_speed --speed-heavy --count 4 --seconds $CLIP_SECONDS $SHAPED
 for first in 0 3; do
-    run_parallel "generate_runman_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_runman --run-maneuvers --count 3 --first "$first" --seconds $CLIP_SECONDS
+    run_parallel "generate_runman_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_runman --run-maneuvers --count 3 --first "$first" --seconds $CLIP_SECONDS $SHAPED
+done
+for first in 0 2; do
+    run_parallel "generate_test_$first" python motion_matching.py generate --motions "$PWD/motions" --name mm_test --test-pattern --count 2 --first "$first" --seed 101 --seconds $CLIP_SECONDS $SHAPED
 done
 wait_parallel
 grep -h -E '^[{]' "$RESULTS"/generate_*.log
@@ -125,7 +133,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.6
 # Warm start only if a policy to start from was uploaded (a new observation layout trains from scratch).
 INIT_FROM=()
 if [ -f PPOJax_saved.pkl ]; then INIT_FROM=(--init-from PPOJax_saved.pkl); else echo "No PPOJax_saved.pkl uploaded: training from scratch"; fi
-TRAIN_MINUTES="${TRAIN_MINUTES:-235}"  # runs 6-9: ~2 h; run 10: ~4 h (user: max 4.5 h for the VM, 2026-10-04; setup ~24 min)
+TRAIN_MINUTES="${TRAIN_MINUTES:-235}"  # runs 6-9: ~2 h; runs 10-11: ~4 h (user: max 4.5 h for the VM, 2026-10-04; setup ~24 min)
 START=$(date +%s)
 set +e
 python _train_chunked.py athlete_tracking.yaml --results "$RESULTS" --max-minutes "$TRAIN_MINUTES" \

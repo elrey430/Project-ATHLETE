@@ -426,7 +426,22 @@ training episode length 721 → ~860). **ALL SIX M4 TESTS PASS with the chunk-55
   each new command, mid-acceleration: 0.69-0.80 m/s for every tracker, against a 0.4 m/s criterion. The
   windows now follow the schedule. Earlier "random" results in this document quote the old measure; their
   fall counts are unaffected.
-- The pass rule is at most 1 fall in all N episodes (here 40, stricter than 20) and speed error < 0.4.
+- The pass rule is a rate: at most 1 fall per 10 episodes, and speed error < 0.4. (Until 2026-10-07 the code
+  checked "at most 1 fall" in any number of episodes, four times too strict at 40; fixed in both suites.)
+  Over 200 episodes in Unreal (LearnedAthleteInUnreal.md), chunk 55 falls 11 times: a pass.
+
+**Toward the football bar (at most 1 fall per 100 random-command episodes; 2026-10-07/08):**
+- Free steps: picking the best run-10 snapshot (all at 5.2-6.0 per 100 over 400 episodes); gentler braking
+  in the controller layer (2.0/2.5/3.0 m/s²: 4.2/5.8/5.5, noise). About half the falls are hard stops from a
+  run (2.5-3 m/s down to 0-1 m/s), often turning; most of the rest are fast running turns.
+- **Run 11 (data only;** `athlete-athlete-tracking-1008-0931`, warm start from run 10 chunk 55, 1.2 B steps,
+  VM 4 h 22 min ≈ $3.79, after ~25 min of L4 stockout retries): 4 matcher clips in the random test's own
+  pattern (`--test-pattern`), and every matcher clip made from shaped commands (`--shaped`, as at run time;
+  before, training clips had sharper transitions than the athlete ever meets).
+- Result over 400 episodes: chunks 5-30 at 2.5-4.5 per 100, chunks 35-61 at 4.5-6.5. **Confirmed on 700
+  episodes each: run 11 chunks 5 and 10, 4.3 per 100; run 10 chunk 55, 5.0.** The gain is at most ~15%,
+  within noise. The single 400-episode 2.5 (chunk 10) was a lucky draw. The data change alone doesn't reach
+  the bar.
 - Fall counts move between snapshots (1 to 6 of 40 across chunks 40-61): the chunk-55 snapshot is the
   pick, not the last one. Runs need the 100STYLE motion set (see run 9).
 

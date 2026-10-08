@@ -158,12 +158,33 @@ def export(agent, out):
           f"golden {len(record['action'])} steps)")
 
 
+def export_policy(agent, out):
+    """Only the policy arrays (for ATHLETE_POLICY_DIR: another checkpoint with the same bundle)."""
+    from loco_mujoco.algorithms import PPOJax
+    _, state = PPOJax.load_agent(agent)
+    bundle = Bundle(out)
+    params = state.train_state.params["FullyConnectedNet_0"]
+    stats = state.train_state.run_stats["RunningMeanStd_0"]
+    bundle.array("policy_obs_mean", stats["mean"], np.float32)
+    bundle.array("policy_obs_var", stats["var"], np.float32)
+    for i in range(3):
+        bundle.array(f"policy_w{i}", params[f"Dense_{i}"]["kernel"], np.float32)
+        bundle.array(f"policy_b{i}", params[f"Dense_{i}"]["bias"], np.float32)
+    (bundle.out / "agent.txt").write_text(str(agent))
+    print(f"policy of {agent} -> {bundle.out}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("agent")
     parser.add_argument("--out", default=str(PROJECT_ROOT / "Saved" / "MuJoCo" / "unreal"))
+    parser.add_argument("--policy-only", action="store_true",
+                        help="write only the policy arrays to --out (use with ATHLETE_POLICY_DIR in Unreal)")
     args = parser.parse_args()
-    export(args.agent, args.out)
+    if args.policy_only:
+        export_policy(args.agent, args.out)
+    else:
+        export(args.agent, args.out)
 
 
 if __name__ == "__main__":
