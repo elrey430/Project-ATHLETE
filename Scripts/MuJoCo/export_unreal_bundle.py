@@ -80,6 +80,7 @@ def export(agent, out):
         "lookahead_steps": [int(s) for s in goal.lookahead_steps], "lead": int(driver.lead),
         "sole_geom_ids": sole_geoms, "root_height_healthy_range": [float(low), float(high)],
         "max_reference_yaw_lead_rad": lt.MAX_REFERENCE_YAW_LEAD_RAD,
+        "max_reference_position_lead_m": lt.MAX_REFERENCE_POSITION_LEAD_M,
         "shaper": {"forward_acceleration": controller.FORWARD_ACCELERATION, "forward_deceleration": controller.FORWARD_DECELERATION,
                    "sideways_acceleration": controller.SIDEWAYS_ACCELERATION, "turn_acceleration": controller.TURN_ACCELERATION},
     })

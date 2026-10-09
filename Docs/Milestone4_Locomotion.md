@@ -444,6 +444,46 @@ training episode length 721 → ~860). **ALL SIX M4 TESTS PASS with the chunk-55
   the bar.
 - Fall counts move between snapshots (1 to 6 of 40 across chunks 40-61): the chunk-55 snapshot is the
   pick, not the last one. Runs need the 100STYLE motion set (see run 9).
+- **Observation bug (found 2026-10-08):** in training (runs 3-11), LocoMuJoCo starts the athlete near
+  x = y = 0 while the reference keeps its clip's absolute position, so the goal input "where the reference
+  is, relative to me" (observation 503-504) was a constant hundreds of metres off: the tracker could not
+  sense drifting off the reference. The Unreal driver was never affected. Fixed in
+  `athlete_loco/invariant.py` (the offset is recorded at reset and at every clip change).
+- **Run 12 (bug fix only;** `athlete-athlete-tracking-1008-1526`, warm start from run 11 chunk 10 with inputs
+  503-504 reset, same data, 1.2 B steps, VM 4 h 24 min ≈ $3.82, after ~19 min of L4 stockout retries).
+  Over 400 episodes: chunks 5-61 at 3.5-7.0 per 100 (most 4.8-7.0). **Confirmed on 700 episodes: chunk 5,
+  3.3 per 100 (23 falls); chunk 60, 4.9.** Chunk 5 is the best snapshot so far, but 23 vs run 11's 30 falls
+  is within noise. Seeing the drift isn't enough: nothing in the reward asks the tracker to stay on the
+  reference's path (the mimic terms are all relative to the pelvis), so the next step is a position term
+  (`MimicHeadingReward` `position_w_sum`, `exp(-5 |error|²)`; tested locally: +0.28 per step when on the
+  path, +0.16 on a hard 100STYLE clip with drift).
+- Spread between snapshots of one run (400 episodes, ~5 per 100) is about ±1.1 per 100 from chance alone,
+  so a snapshot is only "better" after the 700-episode confirmation.
+- **Run 13 (position reward;** `athlete-athlete-tracking-1008-2226`, warm start from run 12 chunk 5,
+  `position_w_sum` 0.3, same data, 1.2 B steps, VM 4 h 19 min ≈ $3.75). **Worse at every snapshot: 7.5-13.2
+  per 100 over 400 episodes, rising with training** (chunks 5-10: 7.5-8.0; 50-60: 11-13), while the training
+  return rose. Rewarding the reference's position trades balance for staying on its path. Not used.
+- **Reference drift at run time (measured 2026-10-09):** the matcher plays its own path, so the reference
+  runs away from a lagging athlete: 0.5 m typical, over 1 m on 31% of steps, up to 4.7 m (run 12 chunk 5,
+  random commands), beyond what training shows (episodes start on the reference). An optional limit
+  (`ATHLETE_POSITION_LEAD`, metres; Python Driver and `AthleteTrackerSim`) holds it: at 0.5 m and 1.0 m it
+  changed nothing beyond noise (run 12 chunk 5: 3.5 -> 5.0 / 3.2; run 13 chunk 30: 9.5 -> 7.8 / 9.8), so
+  it's off by default.
+- The demo runs run 12 chunk 5 since 2026-10-08 (LearnedAthleteInUnreal.md).
+- **Run 14 (training balance assist;** `athlete-athlete-tracking-1009-0752`, warm start from run 12 chunk 5,
+  `AssistPushRandomizer` faded 1 -> 0.5 (chunk 20) -> 0.25 (30) -> 0 (40), `assist_penalty_w` 0.2, same data,
+  57 chunks / 1.12 B steps (each stage change recompiles, ~4 min), VM 4 h 21 min ≈ $3.78).
+  Football bar over 400 episodes: 2.2-6.5 per 100 (chunk 10 2.2, chunk 45 3.5, most 4-6). **Confirmed on 700
+  episodes: chunk 10 3.6 per 100 (25 falls), chunk 45 3.7 (26); run 12 chunk 5 3.3 (23).** No change in falls.
+- Assist demand, the user's check that fewer falls don't come from a controller leaning on corrections
+  (the assist available at full strength, pushes off, 48 clip episodes per snapshot): run 12 chunk 5 1.46% of
+  steps / 5.9 N s per 10 s; run 14 chunk 10 1.76% / 6.2; chunk 40 1.00% / 4.6; chunk 57 0.66% / 3.6. The
+  tracker gets into recoverable trouble about half as often after run 14, but its falls in the random
+  test stay the same: those falls aren't the slow, assistable kind.
+- Three changes (observation fix, position reward, assist) left the fall rate at 3.3-3.7 per 100. The
+  floor looks set by the commands and the reference rather than by the controller: next, check the
+  reference itself at the fall moments (hard stops from a run while turning; is the motion-matched
+  reference physically feasible there?), before more training.
 
 ## 9.5 Open items for learned locomotion
 

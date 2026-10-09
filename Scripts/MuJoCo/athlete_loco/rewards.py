@@ -12,6 +12,13 @@ MimicHeadingReward adds terms to MimicReward:
                                                           each speed in its own body's heading frame
 The velocity term (default off) came after the heading-invariant tracker turned well but lagged the
 reference speed, ~0.2 m/s walking and ~1 m/s running (2026-10-02).
+  + position_w_sum * exp(-position_w_exp * |e_p|^2)       e_p: pelvis xy position error (m), the reference's
+                                                          offset at the episode start removed (invariant.py;
+                                                          default off). Run 12 showed the tracker gained
+                                                          nothing from seeing its drift when no term rewarded
+                                                          staying on the reference (2026-10-08).
+  - assist_penalty_w * (|F| / max_force_n)^2                 F: the training balance assist's force this step
+                                                              (assist.py; default off): don't lean on it
 """
 
 from typing import Any, Dict, Tuple
@@ -28,8 +35,11 @@ class MimicHeadingReward(MimicReward):
 
     def __init__(self, env: Any, heading_w_sum: float = 0.3, heading_w_exp: float = 5.0,
                  yaw_rate_w_sum: float = 0.2, yaw_rate_w_exp: float = 1.0,
-                 velocity_w_sum: float = 0.0, velocity_w_exp: float = 2.0, **kwargs):
+                 velocity_w_sum: float = 0.0, velocity_w_exp: float = 2.0, position_w_sum: float = 0.0,
+                 position_w_exp: float = 5.0, assist_penalty_w: float = 0.0, **kwargs):
         super().__init__(env, **kwargs)
+        self._assist_penalty_w = assist_penalty_w
+        self._position_w_sum, self._position_w_exp = position_w_sum, position_w_exp
         self._velocity_w_sum, self._velocity_w_exp = velocity_w_sum, velocity_w_exp
         self._heading_w_sum, self._heading_w_exp = heading_w_sum, heading_w_exp
         self._yaw_rate_w_sum, self._yaw_rate_w_exp = yaw_rate_w_sum, yaw_rate_w_exp
@@ -49,4 +59,12 @@ class MimicHeadingReward(MimicReward):
         reward = (reward + self._heading_w_sum * backend.exp(-self._heading_w_exp * error ** 2)
                   + self._yaw_rate_w_sum * backend.exp(-self._yaw_rate_w_exp * rate_error ** 2)
                   + self._velocity_w_sum * backend.exp(-self._velocity_w_exp * backend.sum(speed_error ** 2)))
+        if self._position_w_sum:
+            goal_state = getattr(carry.observation_states, "GoalTrackInvariant")
+            position_error = reference.qpos[:2] - goal_state.offset_xy - data.qpos[:2]
+            reward = reward + self._position_w_sum * backend.exp(-self._position_w_exp * backend.sum(position_error ** 2))
+        randomizer_state = carry.domain_randomizer_state
+        if self._assist_penalty_w and hasattr(randomizer_state, "assist_force"):
+            share = backend.sum(randomizer_state.assist_force ** 2) / env._domain_randomizer.max_force_n ** 2
+            reward = reward - self._assist_penalty_w * share
         return reward, carry

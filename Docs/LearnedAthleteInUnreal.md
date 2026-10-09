@@ -1,7 +1,8 @@
 # The learned athlete in Unreal
 
-Built 2026-10-05. Milestone 4's tracking policy (run 10, chunk 55: all six M4 tests passed in Python),
-playable in Unreal.
+Built 2026-10-05. Milestone 4's tracking policy, playable in Unreal. Since 2026-10-08 the demo runs run 12 chunk 5
+(3.3 falls per 100 random-command episodes over 700; run 10 chunk 55, which passed all six M4 tests in Python,
+fell 5.0 per 100: its bundle is kept in `Saved/MuJoCo/unreal_run10_c055`).
 
 ![The learned athlete walking in the lab](images/learned_athlete_unreal.png)
 
@@ -44,7 +45,7 @@ as the MJCF exporter does.
    set ATHLETE_MOTION_SET=100style
    set ATHLETE_MOTIONS=C:\Dev\ProjectAthlete\Saved\MuJoCo\motions_run9
    Intermediate\LocoMuJoCoPython\Scripts\python.exe Scripts\MuJoCo\export_unreal_bundle.py ^
-       Saved\Cloud\athlete-athlete-tracking-1004-2157\results\agent\history\PPOJax_chunk055.pkl
+       Saved\Cloud\athlete-athlete-tracking-1008-1526\results\agent\history\PPOJax_chunk005.pkl
    ```
    This writes `Saved/MuJoCo/unreal/`: the model, the policy, the motion database (~270 MB, 571k frames)
    and a golden session for the parity tests.

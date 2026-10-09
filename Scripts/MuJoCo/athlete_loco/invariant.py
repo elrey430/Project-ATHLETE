@@ -19,11 +19,19 @@ Goal (GoalTrackInvariant), all relative to the athlete or to the reference itsel
   - the athlete's own pelvis linear velocity in its pelvis frame;
   - the lookahead (GoalTrajMimicLookahead: future reference frames relative to the current one).
 Turning the whole scene about the vertical axis leaves every value unchanged (check_invariance.py).
+
+The reference's position relative to the athlete is measured from where both stood when the episode (or the
+reference clip) started. BUG FIXED 2026-10-08: LocoMuJoCo starts each training episode with the athlete near
+x = y = 0 while the reference keeps its clip's absolute position (hundreds of metres away), so in runs 3-11
+this input was the clip's absolute position (training mean 77 m, spread 192 m): the tracker never learned to
+use it and couldn't sense drifting off its reference. At run time (tests, Unreal) the athlete starts on its
+reference, so the offset is zero and nothing changes there.
 """
 
 from typing import Any, List
 
 import numpy as np
+from flax import struct
 
 from loco_mujoco.core import Observation, ObservationType
 from loco_mujoco.core.utils.math import calc_site_velocities, calculate_relative_site_quatities
@@ -58,8 +66,24 @@ def _gravity(quat, backend):
     return _to_body_frame(quat, backend.array([0.0, 0.0, -1.0]), backend)
 
 
+@struct.dataclass
+class GoalTrackInvariantState:
+    offset_xy: Any   # reference pelvis xy minus the athlete's, when the episode (or reference clip) began
+    traj_no: Any     # the reference clip the offset belongs to
+
+
 class GoalTrackInvariant(GoalTrajMimicLookahead):
     """The tracking goal relative to the athlete's own heading (see the module docstring)."""
+
+    def init_state(self, env: Any, key: Any, model, data, backend):
+        return GoalTrackInvariantState(offset_xy=backend.zeros(2), traj_no=0)
+
+    def reset_state(self, env: Any, model, data, carry: Any, backend):
+        data, carry = super().reset_state(env, model, data, carry, backend)
+        traj_state = carry.traj_state
+        ref = env.th.traj.data.get(traj_state.traj_no, traj_state.subtraj_step_no, backend)
+        state = GoalTrackInvariantState(offset_xy=ref.qpos[:2] - data.qpos[:2], traj_no=traj_state.traj_no)
+        return data, carry.replace(observation_states=carry.observation_states.replace(**{self.name: state}))
 
     def _init_from_mj(self, env: Any, model, data, current_obs_size: int):
         n_sites = len(self._info_props["sites_for_mimic"]) - 1
@@ -97,7 +121,13 @@ class GoalTrackInvariant(GoalTrajMimicLookahead):
         q, v = data.qpos, data.qvel  # the root free joint comes first
         yaw_sim, yaw_ref = _heading(q[3:7], backend), _heading(ref.qpos[3:7], backend)
         c, s = backend.cos(yaw_sim), backend.sin(yaw_sim)
-        d = ref.qpos[:2] - q[:2]
+        # Relative to where both started (see the module docstring); a new reference clip restarts it.
+        state = getattr(carry.observation_states, self.name)
+        new_clip = traj_state.traj_no != state.traj_no
+        offset = backend.where(new_clip, ref.qpos[:2] - q[:2], state.offset_xy)
+        carry = carry.replace(observation_states=carry.observation_states.replace(
+            **{self.name: GoalTrackInvariantState(offset_xy=offset, traj_no=traj_state.traj_no)}))
+        d = ref.qpos[:2] - offset - q[:2]
         turn = yaw_ref - yaw_sim
 
         goal = backend.concatenate([

@@ -32,6 +32,7 @@ CRITERIA below (per trial); they're a first bar to beat, not a final standard.
 import argparse
 import dataclasses
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -56,6 +57,13 @@ sys.modules["__main__"].SelectedInputNet = SelectedInputNet
 STAND_CLIP_INDEX = 4  # order of default_dataset_conf.task in athlete_locomotion.yaml: ..., stepinplace1 (4), ...
 TRACKING_GOALS = ("GoalTrajMimic", "GoalTrajMimicLookahead", "GoalTrackInvariant")
 MAX_REFERENCE_YAW_LEAD_RAD = 0.35  # the reference may face this far from the athlete, no further
+# ... and be this far from it (m; 0: no limit). The matcher plays its own path, so without a limit the
+# reference runs away from a lagging athlete: 0.5 m typical, over 1 m on 31% of steps and up to 4.7 m in
+# random-command episodes (run 12 chunk 5, 2026-10-09), while training rarely sees more than ~0.8 m
+# (LocoMuJoCo's episodes start on the reference and end at a fall). Off: in the football-bar test (400
+# episodes) 0.5 m and 1.0 m changed nothing beyond noise (run 12 chunk 5: 3.5 -> 5.0 / 3.2 per 100; run 13
+# chunk 30: 9.5 -> 7.8 / 9.8). ATHLETE_POSITION_LEAD (m) turns it on, here and in Unreal.
+MAX_REFERENCE_POSITION_LEAD_M = float(os.environ.get("ATHLETE_POSITION_LEAD", 0.0))
 TRIAL_OFFSETS_FRAMES = (0, 17, 34, 51, 68)  # trial starts, frames into the step-in-place clip (~a step apart)
 TRAJECTORY_FIELDS = ("qpos", "qvel", "xpos", "xquat", "cvel", "subtree_com", "site_xpos", "site_xmat")
 CRITERIA = {
@@ -151,6 +159,16 @@ class Driver:
         traj.xpos[row], traj.xquat[row], traj.cvel[row] = d.xpos, d.xquat, d.cvel
         traj.subtree_com[row], traj.site_xpos[row], traj.site_xmat[row] = d.subtree_com, d.site_xpos, d.site_xmat
 
+    def _shift_reference(self, now_row, shift):
+        """Moves the queued reference (rows after now_row, and the matcher) by `shift` (m, world xy)."""
+        for k in range(1, self.lead + 1):
+            row = (now_row + k) % self.trajectory_length
+            qpos, qvel = self.rows[row]
+            qpos = qpos.copy()
+            qpos[:2] += shift
+            self._write_reference(row, qpos, qvel)
+        self.matcher.position = self.matcher.position + shift
+
     def _turn_reference(self, now_row, angle):
         """Turns the queued reference (rows after now_row, and the matcher) by `angle` about the current one."""
         pivot = self.rows[now_row][0][:2].copy()
@@ -199,6 +217,10 @@ class Driver:
                 error = motion_matching.wrap(motion_matching.heading(self.rows[now][0][3:7]) - motion_matching.heading(q[3:7]))
                 if abs(error) > MAX_REFERENCE_YAW_LEAD_RAD:
                     self._turn_reference(now, -(error - np.sign(error) * MAX_REFERENCE_YAW_LEAD_RAD))
+                gap = self.rows[now][0][:2] - q[:2]
+                distance = float(np.hypot(*gap))
+                if MAX_REFERENCE_POSITION_LEAD_M > 0 and distance > MAX_REFERENCE_POSITION_LEAD_M:
+                    self._shift_reference(now, -gap * (1 - MAX_REFERENCE_POSITION_LEAD_M / distance))
             else:
                 self.matcher.follow(q[:2], motion_matching.heading(q[3:7]))
             row = (now + 1 + self.lead) % self.trajectory_length

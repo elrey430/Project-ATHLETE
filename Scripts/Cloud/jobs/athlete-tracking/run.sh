@@ -132,7 +132,20 @@ export ATHLETE_IMPORTS=athlete_loco   # registers MjxAthleteReference with LocoM
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.6
 # Warm start only if a policy to start from was uploaded (a new observation layout trains from scratch).
 INIT_FROM=()
-if [ -f PPOJax_saved.pkl ]; then INIT_FROM=(--init-from PPOJax_saved.pkl); else echo "No PPOJax_saved.pkl uploaded: training from scratch"; fi
+# Run 12: observation 503-504 (the reference's position relative to the athlete) held clip-absolute positions
+# in runs 3-11 (athlete_loco/invariant.py, fixed 2026-10-08): the warm start gives them fresh weights and
+# normalization (_train_chunked.py fresh_inputs). Empty for later runs, which already learned the fixed input.
+FRESH_INPUTS=   # run 12: 503,504
+if [ -f PPOJax_saved.pkl ]; then
+    INIT_FROM=(--init-from PPOJax_saved.pkl)
+    if [ -n "$FRESH_INPUTS" ]; then INIT_FROM+=(--fresh-inputs "$FRESH_INPUTS"); fi
+else
+    echo "No PPOJax_saved.pkl uploaded: training from scratch"
+fi
+# Run 14: the training balance assist's stages, "chunk:scale,..." (athlete_loco/assist.py; empty: none). Each
+# change recompiles the training program (~4 min).
+ASSIST_SCHEDULE="0:1,20:0.5,30:0.25,40:0"
+if [ -n "$ASSIST_SCHEDULE" ]; then INIT_FROM+=(--assist-schedule "$ASSIST_SCHEDULE"); fi
 TRAIN_MINUTES="${TRAIN_MINUTES:-235}"  # runs 6-9: ~2 h; runs 10-11: ~4 h (user: max 4.5 h for the VM, 2026-10-04; setup ~24 min)
 START=$(date +%s)
 set +e

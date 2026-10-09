@@ -69,6 +69,7 @@ private:
 	const double* RowQpos(int64 Row) const;
 	const double* RowQvel(int64 Row) const;
 	void TurnQueuedRows(int64 NowRow, double Angle);
+	void ShiftQueuedRows(int64 NowRow, double ShiftX, double ShiftY);
 	void BuildObservation();
 	void SiteQuantities(const mjData* D, double* OutRpos, double* OutRangles, double* OutRvel) const;
 	double LowestSole(const double* Qpos);
@@ -84,7 +85,7 @@ private:
 	FAthleteCommandShaper Shaper;
 
 	int32 Nq = 0, Nv = 0, Nu = 0, Substeps = 5, Lead = 30, RingSize = 512, PelvisBody = 1;
-	double ControlDtS = 0.01, MaxReferenceYawLead = 0.35, HealthyLow = 0.0, HealthyHigh = 10.0;
+	double ControlDtS = 0.01, MaxReferenceYawLead = 0.35, MaxReferencePositionLead = 0.0, HealthyLow = 0.0, HealthyHigh = 10.0;
 	TArray<int32> HingeQposAdr, HingeDofAdr, LookaheadSteps, SiteIds, SiteBodies, SiteRoots, SoleGeoms;
 	TArray<double> CtrlMean, CtrlDelta;
 	TArray<double> Rows; // RingSize x (nq + nv)

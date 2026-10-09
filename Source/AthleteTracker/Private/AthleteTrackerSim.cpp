@@ -59,6 +59,14 @@ bool FAthleteTrackerSim::Initialize(TSharedPtr<const FAthleteTrackerBundle> InBu
 	Substeps = C.GetIntegerField(TEXT("substeps"));
 	Lead = C.GetIntegerField(TEXT("lead"));
 	MaxReferenceYawLead = C.GetNumberField(TEXT("max_reference_yaw_lead_rad"));
+	// Bundles before 2026-10-09 have no position limit (0: none).
+	C.TryGetNumberField(TEXT("max_reference_position_lead_m"), MaxReferencePositionLead);
+	// ATHLETE_POSITION_LEAD=metres: another limit (experiments only; 0 turns it off).
+	const FString PositionLeadOverride = FPlatformMisc::GetEnvironmentVariable(TEXT("ATHLETE_POSITION_LEAD"));
+	if (!PositionLeadOverride.IsEmpty())
+	{
+		MaxReferencePositionLead = FCString::Atod(*PositionLeadOverride);
+	}
 	HingeQposAdr = AthleteTrackerJson::IntArray(C, TEXT("hinge_qpos_adr"));
 	HingeDofAdr = AthleteTrackerJson::IntArray(C, TEXT("hinge_dof_adr"));
 	LookaheadSteps = AthleteTrackerJson::IntArray(C, TEXT("lookahead_steps"));
@@ -210,6 +218,18 @@ void FAthleteTrackerSim::TurnQueuedRows(int64 NowRow, double Angle)
 	Matcher_.Facing += Angle;
 }
 
+void FAthleteTrackerSim::ShiftQueuedRows(int64 NowRow, double ShiftX, double ShiftY)
+{
+	// Moves the queued reference (rows after NowRow, and the matcher) by (ShiftX, ShiftY) m.
+	for (int32 K = 1; K <= Lead; ++K)
+	{
+		double* Q = RowQpos(NowRow + K);
+		Q[0] += ShiftX;
+		Q[1] += ShiftY;
+	}
+	Matcher_.Position += FVector2D(ShiftX, ShiftY);
+}
+
 bool FAthleteTrackerSim::Step(const FAthleteCommand& Command, TConstArrayView<double> ForcedAction)
 {
 	// Keep the reference facing near the athlete (its heading is observed relative to the athlete's).
@@ -219,6 +239,14 @@ bool FAthleteTrackerSim::Step(const FAthleteCommand& Command, TConstArrayView<do
 		if (FMath::Abs(Error) > MaxReferenceYawLead)
 		{
 			TurnQueuedRows(Now, -(Error - FMath::Sign(Error) * MaxReferenceYawLead));
+		}
+		// ... and near it: the matcher plays its own path, which runs away from a lagging athlete.
+		const double GapX = RowQpos(Now)[0] - Sim->qpos[0], GapY = RowQpos(Now)[1] - Sim->qpos[1];
+		const double Distance = FMath::Sqrt(GapX * GapX + GapY * GapY);
+		if (MaxReferencePositionLead > 0.0 && Distance > MaxReferencePositionLead)
+		{
+			const double Excess = 1.0 - MaxReferencePositionLead / Distance;
+			ShiftQueuedRows(Now, -GapX * Excess, -GapY * Excess);
 		}
 	}
 	const FAthleteCommand& Shaped = Shaper.Step(Command, ControlDtS);

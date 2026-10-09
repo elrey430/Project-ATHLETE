@@ -127,6 +127,33 @@ def widen_inputs(agent_state, new_dim):
     return agent_state.replace(train_state=train_state)
 
 
+def fresh_inputs(agent_state, indices, std):
+    """
+    Warm start where some inputs CHANGED meaning (e.g. athlete_loco/invariant.py's reference position, which
+    held clip-absolute positions until 2026-10-08): their input-layer weights (and optimizer moments) go to
+    zero, and their normalization to mean 0, standard deviation std. The policy acts as if they weren't there
+    at first, then learns to use them. (Training updates of the statistics are negligible this late: their
+    sample count is in the billions.)
+    """
+    train_state = agent_state.train_state
+    stats = train_state.run_stats["RunningMeanStd_0"]
+    dim = stats["mean"].shape[0]
+    rows = jnp.asarray(indices)
+
+    def zero_rows(x):
+        if hasattr(x, "shape") and len(x.shape) == 2 and x.shape[0] == dim:
+            return jnp.asarray(x).at[rows].set(0.0)
+        return x
+
+    run_stats = {"RunningMeanStd_0": dict(stats, mean=jnp.asarray(stats["mean"]).at[rows].set(0.0),
+                                          var=jnp.asarray(stats["var"]).at[rows].set(std ** 2))}
+    train_state = train_state.replace(params=jax.tree_util.tree_map(zero_rows, train_state.params),
+                                      opt_state=jax.tree_util.tree_map(zero_rows, train_state.opt_state),
+                                      run_stats=run_stats)
+    print(f"train_chunked: inputs {list(indices)} start fresh (zero weight, normalization 0 +- {std:g})", flush=True)
+    return agent_state.replace(train_state=train_state)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("config")
@@ -145,6 +172,11 @@ def main():
     parser.add_argument("--keep-every", type=int, default=0,
                         help="also keep a copy of every Nth chunk's checkpoint (agent/history/), to pick the best later")
     parser.add_argument("--set", nargs="*", default=[], help="config overrides, e.g. experiment.num_envs=16")
+    parser.add_argument("--fresh-inputs", default="",
+                        help="with --init-from: observation indices whose meaning changed, e.g. 503,504 (fresh_inputs)")
+    parser.add_argument("--fresh-inputs-std", type=float, default=0.5, help="their normalization standard deviation")
+    parser.add_argument("--assist-schedule", default="",
+                        help='training balance assist stages "chunk:scale,..." (AssistPushRandomizer), e.g. "0:1,20:0.5,30:0.25,40:0"')
     args = parser.parse_args()
     started = time.time()
 
@@ -189,15 +221,41 @@ def main():
     elif args.init_from:
         # Warm start: e.g. the multi-clip tracker from the walking policy (identical observation layout).
         _, agent_state = Algorithm.load_agent(args.init_from)
-        agent_state = as_this_run(widen_inputs(agent_state, env.info.observation_space.shape[0]), agent_conf)
+        agent_state = widen_inputs(agent_state, env.info.observation_space.shape[0])
+        if args.fresh_inputs:
+            agent_state = fresh_inputs(agent_state, [int(i) for i in args.fresh_inputs.split(",")], args.fresh_inputs_std)
+        agent_state = as_this_run(agent_state, agent_conf)
         print(f"train_chunked: starting from the weights of {args.init_from}", flush=True)
     compiles_left = 1 if agent_state is not None else 2  # the first and the resume function each compile once
+    # Training balance assist (athlete_loco/assist.py), lowered in stages: "chunk:scale,..." e.g.
+    # "0:1,20:0.5,30:0.25,40:0". The scale is baked into the compiled program, so each new stage rebuilds it
+    # (one compile, ~4 min; the old program is freed first, as after the first chunk).
+    stages = sorted((int(c), float(s)) for c, s in (item.split(":") for item in args.assist_schedule.split(","))) \
+        if args.assist_schedule else []
+    randomizer = getattr(env, "_domain_randomizer", None)
+    if stages and not hasattr(randomizer, "assist_scale"):
+        raise SystemExit("--assist-schedule needs domain_randomization_type: AssistPushRandomizer")
+
+    def assist_scale_for(chunk_index):
+        scale = None
+        for start, value in stages:
+            if chunk_index >= start:
+                scale = value
+        return scale
     while done_steps < total_steps:
         elapsed_min = (time.time() - started) / 60
         if last_chunk_s and elapsed_min + 1.2 * last_chunk_s / 60 > args.max_minutes:
             print(f"train_chunked: stopping for the time budget ({elapsed_min:.1f} of {args.max_minutes} min used)", flush=True)
             break
         rng, key = jax.random.split(rng)
+        wanted_scale = assist_scale_for(chunk)
+        if wanted_scale is not None and wanted_scale != randomizer.assist_scale:
+            print(f"train_chunked: balance assist {randomizer.assist_scale:g} -> {wanted_scale:g} from chunk {chunk + 1}", flush=True)
+            randomizer.assist_scale = wanted_scale
+            next_chunk = None
+            gc.collect()
+            jax.clear_caches()
+            next_chunk = jax.jit(Algorithm.build_resume_train_fn(env, agent_conf, mh=mh))
         chunk_started = time.time()
         if agent_state is None:
             out = jax.block_until_ready(first_chunk(key))

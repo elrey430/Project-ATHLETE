@@ -39,7 +39,19 @@
 #    still improving when its 2 h ran out (episode length 420 -> 721).
 #  - run 11 (data only): run 10's chunk 55 continued with clips in the random-command test's own pattern
 #    (mm_test_0..3) and every matcher clip made from shaped commands, as at run time. Football bar: 5.2 falls
-#    per 100 random episodes, half of them hard stops from a run.
+#    per 100 random episodes, half of them hard stops from a run. Result: 4.3 per 100 (700 episodes), within noise.
+#  - run 12 (bug fix): the reference's position relative to the athlete was clip-absolute in training (runs
+#    3-11; LocoMuJoCo starts the athlete near 0 while the reference keeps its clip position), so the tracker
+#    couldn't sense drifting off the reference. Fixed in athlete_loco/invariant.py; warm start from run 11
+#    chunk 10 with those two inputs fresh. Same data as run 11; no assist. Result: chunk 5 3.3 per 100 on
+#    700 episodes (best so far, within noise of run 11's 4.3); later chunks 4.2-7.0 over 400.
+#  - run 13 (position reward): the tracker now sees its drift (run 12) but nothing rewarded staying on the
+#    reference's path; MimicHeadingReward position_w_sum 0.3. Warm start from run 12 chunk 5; same data, no assist.
+#    Result: worse at every snapshot (7.5-13.2 falls per 100, rising with training); position_w_sum back to 0.
+#  - run 14 (balance assist): run 12 chunk 5 continued with the training assist (AssistPushRandomizer), faded
+#    1 -> 0.5 (chunk 20) -> 0.25 (30) -> 0 (40), with assist_penalty_w 0.2. Same data; position term off.
+#    Result: falls unchanged (chunk 10 3.6, chunk 45 3.7 per 100 on 700 episodes; run 12 chunk 5 3.3); assist
+#    demand halved (1.5% -> 0.7% of steps).
 defaults:
   - override hydra/job_logging: default
   - override hydra/launcher: basic
@@ -88,8 +100,12 @@ experiment:
     # Recovery training (run 8): pushes + sensor noise. LocoMuJoCo's randomizer reads every key below; the
     # model randomizations (mass, friction, gravity, ...) stay off: per-world model changes are untested on
     # MuJoCo Warp, and our contacts are explicit pairs its friction randomization wouldn't reach.
-    domain_randomization_type: PushRandomizer
+    # Run 14: + the training balance assist (athlete_loco/assist.py, the "invisible hand"): a weak, capped push
+    # on the pelvis toward the reference's velocity when an avoidable balance loss begins. run.sh's
+    # ASSIST_SCHEDULE lowers assist_scale to 0 in stages; the last third of the run trains without it.
+    domain_randomization_type: AssistPushRandomizer
     domain_randomization_params:
+      assist_scale: 1.0             # stage 1 (run.sh ASSIST_SCHEDULE sets the later stages)
       push_interval_s: [2.0, 5.0]
       push_duration_s: [0.1, 0.2]
       push_impulse_ns: [0.0, 20.0]
@@ -143,6 +159,9 @@ experiment:
       yaw_rate_w_exp: 1.0
       velocity_w_sum: 0.4    # pelvis forward/sideways speed: exp(-2 |e|^2), e in m/s
       velocity_w_exp: 2.0
+      position_w_sum: 0.0    # stay on the reference's path: exp(-5 |e|^2), e = pelvis xy offset in m. Run 13 (0.3): worse
+      position_w_exp: 5.0
+      assist_penalty_w: 0.2  # run 14: - 0.2 (|F| / max force)^2 per step: don't lean on the assist
       qpos_w_sum: 0.4
       qvel_w_sum: 0.2
       rpos_w_sum: 0.5
