@@ -73,6 +73,8 @@ struct ATHLETEBODY_API FAthleteMobilityProfile
 	 *    NOT independently verified this session; the split between the lumbar and thoracic
 	 *    joints is an ESTIMATE.
 	 *  - Shoulder adduction and ankle toe-in/out are not in the AAOS table: ESTIMATES.
+	 *  - Ankle dorsiflexion: 35, from loaded running (AddBiomechanics, Hamner 2013 runners peak at
+	 *    27-29 deg), not AAOS's passive 20 (2026-11-09).
 	 */
 	static FAthleteJointRangeOfMotion GetNormalAdult(EAthleteJointKind Kind);
 };

@@ -31,6 +31,7 @@ correctly under gravity, contact and external forces. It's **passive**: no muscl
 |---|---|
 | Joint ranges of motion | AAOS (1965), *Joint Motion: Method of Measuring and Recording*, verified via goniometer.io's AAOS chart |
 | Thoracolumbar totals (80/25/35/45°) | AAOS. **Not independently verified**; the lumbar/thoracic split is an ESTIMATE |
+| Ankle dorsiflexion 35° (since 2026-11-09; AAOS 20° before) | Loaded running: 9 runners in the AddBiomechanics dataset (Hamner 2013, CC BY 4.0) peak at 27-29° every stride, 33° max. AAOS's 20° is passive, knee straight, no weight. See MotionData.md §7 |
 | Wrist-to-fingertip hand length (collision only) | de Leva (1996) Table 4, alternative hand row (187.9 mm vs 86.2 mm) |
 
 ## 3. Simplifications

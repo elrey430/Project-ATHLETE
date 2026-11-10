@@ -161,7 +161,13 @@ class FootOrientation:
                 toe_positions.append(np.append(toe, back))  # [toes xyz, heel-end xyz]
             rotations, points = np.array(rotations), np.array(toe_positions)
             speed = np.r_[0.0, np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1) * frequency]
-            planted = (points[:, 2] < np.percentile(points[:, 2], 25)) & (speed < 0.15)
+            # Short running trials (AddBiomechanics treadmill running at 4-5 m/s, 2 s) have no toe that low and
+            # that still: widen the speed threshold until there are enough frames (unchanged for clips that
+            # already have them).
+            for still in (0.15, 0.3, 0.5):
+                planted = (points[:, 2] < np.percentile(points[:, 2], 25)) & (speed < still)
+                if planted.sum() >= 10:
+                    break
             if source.flat_needs_heel_down:
                 # The toe alone is also low and still at push-off, heel already up: calibrating "flat" there
                 # tilted 100STYLE feet toes-down, so real flat stance came out toes-up and the ankles sat at
@@ -392,6 +398,148 @@ class BvhSource:
                 self.positions[f, self.ids[f"ankle_{side}"]].copy())
 
 
+# AddBiomechanics joint names per landmark (Rajagopal model; first match wins).
+B3D_NAMES = {
+    "hip": ("hip_{s}",), "knee": ("walker_knee_{s}", "knee_{s}"), "ankle": ("ankle_{s}",),
+    "subtalar": ("subtalar_{s}",), "ball": ("mtp_{s}",), "shoulder": ("acromial_{s}", "shoulder_{s}"),
+    "elbow": ("elbow_{s}",), "wrist": ("radius_hand_{s}", "wrist_{s}"),
+}
+B3D_HEAD_ABOVE_SHOULDERS_M = 0.2  # the model has no neck joint: the head lies on the trunk's axis (direction only:
+                                  # rebuild() rescales every segment to the athlete's own length)
+
+
+class B3dSource:
+    """
+    One trial of an AddBiomechanics subject (.b3d; b3d.py). Same interface as SkeletonSource.
+    The solved joint centres of one processing pass; by default the "dynamics" pass, whose motion was adjusted
+    to match the measured ground reaction forces (physically consistent by construction), else the low-pass
+    filtered kinematics. Treadmill trials (stance foot moving at the belt's speed while the measured force
+    says it bears weight) get the belt's motion added back: at constant belt speed that is the same physics
+    as moving over ground (2026-11-09: Hamner 2013 is treadmill running at 2-5 m/s).
+    """
+
+    def __init__(self, path, trial, prefix="addb_", processing_pass=None):
+        import b3d
+        subject = b3d.B3D(path)
+        info = subject.trials[trial]
+        if processing_pass is None:
+            kinds = [p["type"] for p in subject.passes]
+            processing_pass = kinds.index("dynamics") if "dynamics" in kinds else \
+                kinds.index("lowPassFilter") if "lowPassFilter" in kinds else 0
+        frame = subject.read(trial, processing_pass)
+        self.path = Path(path)
+        self.name = f"{prefix}{self.path.stem}_{info.name}".lower()
+        self.folder = "DEFAULT/mocap"
+        self.description = (f"AddBiomechanics {self.path.parent.name}/{self.path.name} trial {info.name} "
+                            f"({subject.passes[processing_pass]['type']} pass; CC BY 4.0, Werling et al. ECCV 2024)")
+        self.leg_scale_from_lengths = True
+        self.floor = "clip"
+        self.flat_needs_heel_down = True
+        self.ik_restarts = True
+        self.frequency = 1.0 / info.timestep
+        self.positions = bvh.world(frame["joint_centers"], 1.0, True)  # OpenSim Y up -> Z up
+        index = {name: i for i, name in enumerate(frame["joint_names"])}
+
+        def find(kind, side=""):
+            for pattern in B3D_NAMES[kind]:
+                if pattern.format(s=side) in index:
+                    return index[pattern.format(s=side)]
+            raise KeyError(f"{self.path.name}: no {kind} joint for side {side} (have {sorted(index)})")
+        self.ids = {f"{kind}_{side}": find(kind, side) for kind in B3D_NAMES for side in "lr"}
+        self.back = index.get("back")
+
+        # Treadmill: the belt's velocity = the velocity of the weight-bearing foot's point ON the belt: the
+        # lower of heel (subtalar) and ball (mtp) each frame. (The ankle rolls forward over the foot: its
+        # velocity read the 2 m/s belt as 1.83 and left the stance foot sliding 0.2-0.4 m/s.)
+        force = bvh.world(frame["force"], 1.0, True)
+        weight = subject.mass_kg * 9.81
+        moving = []
+        for body, contact in zip(subject.contact_bodies, np.moveaxis(force, 1, 0)):
+            side = body[-1]
+            if side not in "lr":
+                continue
+            heel, ball = (self.positions[:, self.ids[f"{kind}_{side}"]] for kind in ("subtalar", "ball"))
+            velocity = np.where((heel[:, 2] < ball[:, 2])[:, None], np.gradient(heel[:, :2], info.timestep, axis=0),
+                                np.gradient(ball[:, :2], info.timestep, axis=0))
+            stance = contact[:, 2] > 0.5 * weight  # mid-stance: the foot is fully on the belt
+            moving.extend(velocity[stance])
+        self.belt_velocity = np.median(moving, axis=0) if len(moving) > 10 else np.zeros(2)
+        if np.linalg.norm(self.belt_velocity) > 0.3:
+            shift = np.outer(np.arange(len(self.positions)) * info.timestep, self.belt_velocity)
+            self.positions[:, :, :2] -= shift[:, None, :]
+            self.description += f"; treadmill belt {np.linalg.norm(self.belt_velocity):.2f} m/s added"
+
+        # Toe-out: real feet point 7-11 deg outward from the knee's plane (tibial torsion; Hamner 2013, every
+        # subject and speed). The athlete's leg has none (nor has LocoMuJoCo's skeleton: ~0 deg), so copying
+        # it twisted the athlete's ankle to its +/-10 deg limit in up to 83% of swing frames (2026-11-09).
+        # Each foot is turned back about the shank by its median toe-out (knee bent > 30 deg), the sign
+        # that brings it to zero.
+        self.toe_out = {side: 0.0 for side in "lr"}
+        for side in "lr":
+            angle = self._median_toe_out(side)
+            if np.isfinite(angle):
+                trials = {}
+                for sign in (1.0, -1.0):
+                    self.toe_out[side] = sign * angle
+                    trials[sign] = abs(self._median_toe_out(side))
+                self.toe_out[side] = min(trials, key=trials.get) * angle
+        self.description += f"; toe-out removed (L {np.degrees(self.toe_out['l']):.1f}, R {np.degrees(self.toe_out['r']):.1f} deg)"
+
+    def _median_toe_out(self, side):
+        """Median angle (rad) between the foot's long axis and the leg's plane, knee bent > 30 deg."""
+        angles = []
+        for frame in range(self.n_frames):
+            self.set_frame(frame)
+            p = self.positions[frame]
+            hip, knee, ankle = (p[self.ids[f"{kind}_{side}"]] for kind in ("hip", "knee", "ankle"))
+            thigh, shank = knee - hip, ankle - knee
+            bend = np.arccos(np.clip(np.dot(thigh, shank) / np.linalg.norm(thigh) / np.linalg.norm(shank), -1, 1))
+            if bend < np.radians(30):
+                continue
+            normal = np.cross(thigh, shank)
+            _, toe, back = self.foot(side)
+            forward = (toe - back) / np.linalg.norm(toe - back)
+            angles.append(np.arcsin(np.clip(np.dot(forward, normal / np.linalg.norm(normal)), -1, 1)))
+        return float(np.median(angles)) if angles else float("nan")
+
+    @property
+    def n_frames(self):
+        return len(self.positions)
+
+    def trim(self, n_frames):
+        self.positions = self.positions[:n_frames]
+
+    def set_frame(self, frame):
+        self.frame = frame
+
+    def points(self):
+        p = self.positions[self.frame]
+        points = {name: p[i].copy() for name, i in self.ids.items() if not name.startswith("subtalar")}
+        points["heel_l"], points["heel_r"] = p[self.ids["subtalar_l"]].copy(), p[self.ids["subtalar_r"]].copy()
+        points["H"] = 0.5 * (points["hip_l"] + points["hip_r"])
+        points["S"] = 0.5 * (points["shoulder_l"] + points["shoulder_r"])
+        trunk = points["S"] - (p[self.back] if self.back is not None else points["H"])
+        points["head"] = points["S"] + trunk / np.linalg.norm(trunk) * B3D_HEAD_ABOVE_SHOULDERS_M
+        return points
+
+    def foot(self, side):
+        """(foot rotation 3x3, toe point, heel-end point): a frame from the ankle, subtalar and toe joints,
+        turned about the shank by the subject's toe-out correction."""
+        p = self.positions[self.frame]
+        knee, ankle, back, toe = (p[self.ids[f"{kind}_{side}"]] for kind in ("knee", "ankle", "subtalar", "ball"))
+        forward = (toe - back) / np.linalg.norm(toe - back)
+        left = np.cross(ankle - back, forward)
+        left /= np.linalg.norm(left)
+        rotation = np.column_stack([forward, left, np.cross(forward, left)])
+        angle = getattr(self, "toe_out", {}).get(side, 0.0)
+        if angle:
+            axis = (ankle - knee) / np.linalg.norm(ankle - knee)
+            k = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+            turn = np.eye(3) + np.sin(angle) * k + (1 - np.cos(angle)) * k @ k  # Rodrigues
+            rotation, toe, back = turn @ rotation, ankle + turn @ (toe - ankle), ankle + turn @ (back - ankle)
+        return rotation, toe.copy(), back.copy()
+
+
 def save_motion(athlete, qpos, qvel, frequency, target, split_points=None):
     """
     Saves athlete motion (qpos/qvel per frame) as a LocoMuJoCo trajectory, extended with body and site
@@ -535,9 +683,9 @@ def retarget(source, out_dir, max_seconds=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--source", choices=sorted(SOURCES) + ["bvh"], default="default")
+    parser.add_argument("--source", choices=sorted(SOURCES) + ["bvh", "b3d"], default="default")
     parser.add_argument("--datasets", nargs="+", default=["walk"])
-    parser.add_argument("--files", nargs="+", default=[], help="BVH files (--source bvh)")
+    parser.add_argument("--files", nargs="+", default=[], help="BVH files (--source bvh) or AddBiomechanics .b3d files (--source b3d, every trial)")
     parser.add_argument("--prefix", default="", help="BVH: clip name prefix, e.g. 100style_")
     parser.add_argument("--frames", nargs=2, type=int, default=None, metavar=("START", "END"),
                         help="BVH: only these file frames (e.g. without the T-poses)")
@@ -551,6 +699,9 @@ def main():
     args = parser.parse_args()
     if args.source == "bvh":
         sources = (BvhSource(f, args.prefix, args.frames, args.scale, not args.z_up) for f in args.files)
+    elif args.source == "b3d":
+        import b3d
+        sources = (B3dSource(f, k, args.prefix or "addb_") for f in args.files for k in range(len(b3d.B3D(f).trials)))
     else:
         sources = (SkeletonSource(args.source, dataset) for dataset in args.datasets)
     for source in sources:

@@ -56,8 +56,12 @@ FAthleteJointRangeOfMotion FAthleteMobilityProfile::GetNormalAdult(EAthleteJoint
 	case EAthleteJointKind::Hip:      return MakeRom(120.0, 30.0, 45.0, 30.0, 45.0, 45.0);
 	// AAOS knee flexion 135. Hinge for now: tibial rotation of the flexed knee is not modeled.
 	case EAthleteJointKind::Knee:     return MakeRom(135.0,  0.0,  0.0,  0.0,  0.0,  0.0);
-	// AAOS ankle: dorsiflexion 20, plantarflexion 50, inversion 35, eversion 15. Toe-in/out ESTIMATE.
-	case EAthleteJointKind::Ankle:    return MakeRom( 20.0, 50.0, 10.0, 10.0, 35.0, 15.0);
+	// AAOS ankle: plantarflexion 50, inversion 35, eversion 15. Toe-in/out ESTIMATE.
+	// Dorsiflexion 35, not AAOS's 20: that is measured passively, knee straight, no weight on the foot. In
+	// loaded running the ankle bends further: 9 runners (AddBiomechanics, Hamner 2013, treadmill 2-5 m/s)
+	// peak at 27-29 deg every stride, 33 max, never past 35. At 20 the retargeted running sat at the limit
+	// in 21% of frames; at 35, 1.7% (Docs/MotionData.md section 7, 2026-11-09).
+	case EAthleteJointKind::Ankle:    return MakeRom( 35.0, 50.0, 10.0, 10.0, 35.0, 15.0);
 	default:                          checkNoEntry(); return FAthleteJointRangeOfMotion();
 	}
 }

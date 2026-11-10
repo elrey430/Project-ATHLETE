@@ -47,6 +47,14 @@ Football sprinting needs our own capture (Docs: video-as-source research, memory
 
 Source: https://www.ianxmason.com/100style/ (data: Zenodo record 8127870, DOI 10.5281/zenodo.8127870).
 
+> AddBiomechanics Dataset by Keenon Werling, Janelle Kaneda, Tian Tan et al., "AddBiomechanics Dataset:
+> Capturing the Physics of Human Motion at Scale", ECCV 2024 (doi:10.1007/978-3-031-73223-2_27), licensed
+> under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); subset Hamner et al. 2013 (running).
+> Modified: treadmill belt motion added back, retargeted to the ATHLETE body (joint centres of the
+> "dynamics" processing pass), feet placed on the floor.
+
+Source: https://addbiomechanics.org/download_data.html (core dataset, Google Drive "With_Arm" set).
+
 ## 4. Pipeline (ready, tested without downloaded data)
 
 - **`Scripts/MuJoCo/bvh.py`** reads BVH files (any channel order; Y up and centimetres converted to
@@ -136,3 +144,69 @@ trained on. So the database switch is tied to the tracker: `ATHLETE_MOTION_SET=1
 - The config adds the 21 clips once each and drops walk_mirror. Matcher clips are 170 s each
   (memory: ~704k frames vs the ~760k limit).
 - LocoMuJoCo's loader finds the clips by name (tested).
+
+## 7. AddBiomechanics (2026-11-09)
+
+Stanford's AddBiomechanics Dataset (CC BY 4.0; licence row and terms in MotionDataLicenses.md; credit in
+§3): lab motion capture with **measured ground reaction forces**, solved on a mass-tuned Rajagopal model
+(37 DOF), ~70 h from 15 studies. The full archive is 418 GB, so studies are taken one at a time from the
+core set's Google Drive folder (`train/With_Arm/<study>/<subject>/<subject>.b3d`).
+
+**Downloaded (user approved):** Hamner 2013, 9 subjects, 115 MB, `Saved/MotionData/AddBiomechanics/Hamner2013/`.
+Each subject: 4 trials of **treadmill running at 2, 3, 4 and 5 m/s**, ~2 s each at 100 Hz (about 75 s
+in all), ground force usable on every frame.
+
+**Reading:** `Scripts/MuJoCo/b3d.py`, our own reader (pure Python; nimblephysics, the official one, has no
+Windows build). Layout from nimblephysics' source (MIT). Per frame: joint angles, joint centres (20: the
+model's kneecap joints aren't stored), joint torques, ground force and centre of pressure per foot, centre
+of mass. Three processing passes per trial: kinematics, lowPassFilter, **dynamics** (motion adjusted to
+match the measured forces; used by default).
+
+**Retargeting:** `retarget_motion.py --source b3d --files <subject>.b3d` (`B3dSource`): joint centres to
+the athlete's landmarks; the head on the trunk's axis (the model has no neck joint); the foot frame from
+the ankle, subtalar and toe joints. Treadmill: the belt's velocity is measured from the weight-bearing
+foot's point on the belt (heel or ball, whichever is lower) and added back (2.02 / 3.03 / 3.88 / 4.76 m/s
+for subject 1; within ~3% of the trial labels across subjects).
+
+**Result, subject 1 (4 trials):** landmarks fit within 1 cm (mean). Physical check
+(`Scripts/MuJoCo/reference_feasibility.py`, Milestone4_Locomotion.md §9.6): **0% of frames need more grip
+than the feet have** (99th percentile of friction need 0.32-0.43), against 2.5% for LocoMuJoCo's run clip
+and 2.7% for 100STYLE rushed (p99 ~0.8); force needed in flight 0.09-0.15 body weight vs 0.34.
+Short trials (2 s) and treadmill only: no stops, cuts or turns.
+
+**All 9 subjects (36 clips, 2026-11-09, in `Saved/MuJoCo/motions_addb`, 18 MB), athlete speeds 1.9-5.0 m/s:** fit 0.5 cm (worst landmark, mean);
+physical check **0.27% of frames need more grip than the feet have** (raw mocap clips 0.36%, LocoMuJoCo
+run 2.5%); friction need p99 0.52.
+
+**Ankle (investigated 2026-11-09):**
+- *Toe-out, fixed.* The runners' feet point 7-11° outward from the knee's plane (tibial torsion; every
+  subject, both feet, all speeds). The athlete's leg has none (nor has LocoMuJoCo's skeleton, ~0°), so
+  copying it twisted the athlete's ankle (`Ankle*_abd`, a vertical axis: toe-in/out, ±10°) to its limit
+  in 13-18% of frames, up to 83% of swing. `B3dSource` now turns each foot back about the shank by the
+  subject's median toe-out (measured with the knee bent > 30°): ankle at that limit 1%, fit unchanged.
+- *Dorsiflexion, a body-model limit (raised to 35°, see below).* The athlete's ankle stopped at 20° (AAOS clinical norm,
+  `AthleteMobility.cpp`: measured passively, knee straight, no weight). These runners peak at 27-29°
+  every stride (all speeds; 14% of frames beyond 20°, 7% beyond 25°, 0.9% beyond 30°, none beyond 35°),
+  so the athlete's ankle sits at its limit in ~20% of frames (LocoMuJoCo run: 7%). Raising it to ~30-35°
+  would touch the Unreal body (Milestone 1: joint setup, its tests, the balance controller's 15° lean
+  margin), the MuJoCo export and the trained tracker: a decision, not a retargeting fix.
+- *Free test of a wider range (2026-11-09; `Saved/MuJoCo/ankle_test`, models `athlete_ankle30.xml` /
+  `athlete_ankle35.xml`: only the two ankle-flex limits changed).* The same clips retargeted onto each:
+
+  | | at dorsiflexion limit | used, p95 | foot fit p95 | stance slide | impossible grip |
+  |---|---|---|---|---|---|
+  | AddBiomechanics running (36): 20° / 30° / 35° | 21.3 / 7.7 / **1.7%** | 20.0 / 30.0 / 31.9° | 2.40 / 0.51 / **0.12 cm** | 0.345 / 0.268 / 0.250 m/s | 0.27 / 0.38 / 0.39% |
+  | 100STYLE (6: neutral, rushed, angry; forward and turning runs) | 10.6 / 0.6 / 0.0% | 20.0 / 23.2 / 23.2° | 1.90 / 1.71 / 1.70 cm | 0.088 / 0.081 / 0.081 m/s | 0.73 / 0.79 / 0.79% |
+
+  No other joint reached its limit more often. 35° lets the running data fit almost exactly (100STYLE
+  needs only ~23°, so 30° already covers it); the small rise in impossible-grip frames (~8 frames of 7,211)
+  is within noise, and the share stays at the raw mocap's level (0.36%). Whether it helps the tracker
+  (falls, stops) is untested: that needs a training run.
+- **Decision (user, 2026-11-09): 35°.** `AthleteMobility.cpp` ankle dorsiflexion 20 → 35 (Milestone 2's
+  sources table updated); the balance controller keeps its 15° forward-lean limit. Re-exported
+  (`ProjectTools.Export.MuJoCo`): all five MuJoCo models changed only in the two ankle-flex limits, the
+  reference athlete identical to the tested `athlete_ankle35.xml`. Unreal tests: Athlete.Body/Core/Lab/
+  Motor/Physics 57/57 pass (balance, push recovery, walking included); Athlete.Tracker parity, acceptance
+  and pawn 10/10. `Saved/MuJoCo/motions_addb` now holds the 35° retargets (20° ones kept in
+  `motions_addb_ankle20`). The trained tracker and its Unreal bundle still carry the 20° model until the
+  next training run, which uses the new export (warm start works: inputs unchanged).

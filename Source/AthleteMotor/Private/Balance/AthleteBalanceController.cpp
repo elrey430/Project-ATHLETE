@@ -10,7 +10,7 @@ namespace
 	constexpr double HipStrategyOnsetFraction = 0.5;
 
 	/** Command limits, in degrees, kept inside normal ranges of motion. */
-	constexpr double MaxLeanForwardDeg = 15.0;  // ankle dorsiflexion range is 20 deg
+	constexpr double MaxLeanForwardDeg = 15.0;  // well inside ankle dorsiflexion (35 deg since 2026-11-09; was 20)
 	constexpr double MaxLeanBackwardDeg = 15.0; // plantarflexion is 50 deg, but leaning back far is useless
 	constexpr double MaxLeanSidewaysDeg = 10.0;
 	constexpr double MaxHipFlexionDeg = 60.0;

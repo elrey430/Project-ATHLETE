@@ -91,7 +91,7 @@ bool FAthleteJointFrameTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Left hip neutral leans the thigh outward (-Y)"), LeftHip.NeutralRotation.RotateVector(LeftHip.LongAxis).Y < 0.0);
 	TestTrue(TEXT("Right hip neutral leans the thigh outward (+Y)"), Hip.NeutralRotation.RotateVector(Hip.LongAxis).Y > 0.0);
 
-	// Ankle: 20 dorsi / 50 plantar -> neutral is 15 deg of plantarflexion: toes point DOWN.
+	// Ankle: 35 dorsi / 50 plantar -> neutral is 7.5 deg of plantarflexion: toes point DOWN.
 	const FAthleteJointSetup Ankle = SetupFor(Model, EAthleteJoint::AnkleRight);
 	TestTrue(TEXT("Ankle twist axis points along the foot"), Ankle.JointFrame.RotateVector(FVector::XAxisVector).Equals(FVector(1, 0, 0), Tolerance));
 	TestTrue(TEXT("Ankle neutral points the toes down"), Ankle.NeutralRotation.RotateVector(Ankle.LongAxis).Z < 0.0);
