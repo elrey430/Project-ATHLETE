@@ -185,6 +185,7 @@ class Driver:
             self._write_reference(row, qpos, qvel)
         self.matcher.position = pivot + turn @ (self.matcher.position - pivot)
         self.matcher.facing += angle
+        self.matcher.velocity_world = turn @ self.matcher.velocity_world  # (its acceleration limit's last velocity)
 
     def _shaped(self, command):
         """The command as the athlete receives it (through the controller layer, if on)."""

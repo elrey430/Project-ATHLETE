@@ -94,6 +94,26 @@ JUMP_MARGIN = 2.0               # jump only if the best frame's cost is this muc
 MIN_JUMP_INTERVAL_FRAMES = 20   # after a jump, play on at least this long before the next (clip ends excepted)
 COMMAND_CHANGE_SEARCH = 0.25    # a command change this large (m/s or rad/s) since the last search searches at once
 BLEND_HALFLIFE_S = 0.1
+# The pelvis tilt's rate carried through a jump, as the joints' and height's are, and the reference's angular
+# velocity taken from its blended motion (2026-10-09). Without it the tilt rate switched to the new clip's in
+# one frame at every jump, and the stated angular velocity with it: 83% of the reference's impossible frames
+# (more grip than the feet have) were such blend artefacts, half within 50 ms of a jump. Measured: the stated
+# angular velocity matches the motion 10x better (median error 0.31 -> 0.03 rad/s), but impossible frames
+# stay (1.87% -> 1.94% of frames over 60 random-command episodes, open loop). Off: no gain shown.
+INERTIALIZE_TILT_RATE = False
+# The ground fix (reference(): the lowest foot point kept where the mocap frame has it) blended across a jump
+# too: its target switches with the frame, which moved the pelvis up or down at up to 5.5 m/s in one frame.
+# Measured with the tilt-rate fix: impossible frames 1.81% (vs 1.87%). Off: no gain shown.
+SMOOTH_GROUND_FIX = False
+# Horizontal acceleration limit for the reference's pelvis (m/s^2; 0: none). At a jump the blend decays the
+# old clip's speed difference at up to ~4.4 m/s^2 per m/s of difference, on top of the new clip's own
+# acceleration: in 72% of the reference's impossible-grip frames the pelvis's acceleration was the largest
+# part of the horizontal force (median 0.56 body weight, 4 frames after a jump; 2026-10-09). The feet's grip
+# ends at 0.7 g (6.9 m/s^2). The speed difference above the limit stays in the blend offset and is caught up
+# at the limit. Measured (2026-10-10): 4 / 5 / 6 m/s^2 cut impossible frames 1.87% -> 1.51 / 1.54 / 1.56%,
+# responsiveness unchanged; but falls with 5 m/s^2 (run 12 chunk 5, the same 300 random-command episodes,
+# Python Driver): 17 vs 18, and only 7 of the falls were the same episodes (chaos reshuffles them). Off.
+ACCEL_LIMIT_MPS2 = 0.0
 CONTROL_HALFLIFE_S = 0.25
 N_OFFSETS_EXTRA = 1 + 3 + 2 + 1  # height, tilt (rotation vector), pelvis velocity xy, turning rate
 
@@ -210,6 +230,14 @@ class MotionDatabase:
             self.yaw_rate[a:b] = np.gradient(self.yaw[a:b], DT)
             foot_velocity[a:b] = np.gradient(feet[a:b], DT, axis=0)
         self.tilt = yaw_rotation(self.yaw).inv() * to_rotation(qpos[:, 3:7])  # pelvis vs its heading
+        # Its rate of change (rotation vector per second, heading frame; central differences in each range).
+        self.tilt_rate = np.zeros((self.n_frames, 3))
+        for a, b in self.ranges:
+            if b - a < 2:
+                continue
+            step = (self.tilt[a + 1:b] * self.tilt[a:b - 1].inv()).as_rotvec() / DT
+            self.tilt_rate[a], self.tilt_rate[b - 1] = step[0], step[-1]
+            self.tilt_rate[a + 1:b - 1] = 0.5 * (step[:-1] + step[1:])
         self.pelvis_velocity = np.concatenate([rotate_2d(qvel[:, :2], -self.yaw), qvel[:, 2:3]], axis=1)  # heading frame
         self.height = qpos[:, 2]
         self.angular_velocity = qvel[:, 3:6]  # MuJoCo free joint: in the pelvis's own frame
@@ -296,6 +324,8 @@ class MotionMatcher:
         # starts from it, not from the animation (which lags mid-blend and would pull the search back).
         self.control_velocity = self.db.pelvis_velocity[self.frame, :2].copy()
         self.control_yaw_rate = float(self.db.yaw_rate[self.frame])
+        self.ground_offset, self.ground_offset_rate, self.ground_fix, self.jumped = 0.0, 0.0, None, False
+        self.velocity_world = rotate_2d(self.db.pelvis_velocity[self.frame, :2], self.facing)
         return self.reference()
 
     def _pose(self, frame, offset, offset_rate):
@@ -306,6 +336,7 @@ class MotionMatcher:
                 "height": db.height[frame] + offset[n],
                 "vertical_velocity": db.pelvis_velocity[frame, 2] + offset_rate[n],
                 "tilt": Rotation.from_rotvec(offset[n + 1:n + 4]) * db.tilt[frame],
+                "tilt_rate": db.tilt_rate[frame] + offset_rate[n + 1:n + 4],
                 "velocity": db.pelvis_velocity[frame, :2] + offset[n + 4:n + 6],
                 "yaw_rate": db.yaw_rate[frame] + offset[n + 6]}
 
@@ -337,10 +368,13 @@ class MotionMatcher:
         x[n] = old["height"] - db.height[frame]
         v[n] = old["vertical_velocity"] - db.pelvis_velocity[frame, 2]
         x[n + 1:n + 4] = (old["tilt"] * db.tilt[frame].inv()).as_rotvec()
+        if INERTIALIZE_TILT_RATE:
+            v[n + 1:n + 4] = old["tilt_rate"] - db.tilt_rate[frame]
         x[n + 4:n + 6] = old["velocity"] - db.pelvis_velocity[frame, :2]
         x[n + 6] = old["yaw_rate"] - db.yaw_rate[frame]
         self.offset, self.offset_rate, self.frame = x, v, frame
         self.jumps += 1
+        self.jumped = True
 
     def step(self, command):
         """Advance one frame toward the command (forward m/s, sideways m/s, turning rad/s, own frame)."""
@@ -371,9 +405,21 @@ class MotionMatcher:
                 self.since_jump = 0
         self.frame = next_frame
         self.offset, self.offset_rate = decay_offset(self.offset, self.offset_rate, BLEND_HALFLIFE_S, DT)
+        self.ground_offset, self.ground_offset_rate = decay_offset(self.ground_offset, self.ground_offset_rate, BLEND_HALFLIFE_S, DT)
         pose = self._pose(self.frame, self.offset, self.offset_rate)
         self.facing += pose["yaw_rate"] * DT
-        self.position += rotate_2d(pose["velocity"], self.facing) * DT
+        velocity = rotate_2d(pose["velocity"], self.facing)
+        if ACCEL_LIMIT_MPS2 > 0:
+            change = velocity - self.velocity_world
+            size, most = np.linalg.norm(change), ACCEL_LIMIT_MPS2 * DT
+            if size > most:
+                velocity = self.velocity_world + change * (most / size)
+                limited = rotate_2d(velocity, -self.facing)
+                n = self.n_joints
+                self.offset[n + 4:n + 6] += limited - pose["velocity"]
+                pose["velocity"] = limited
+        self.velocity_world = velocity
+        self.position += velocity * DT
         return self.reference(pose)
 
     def reference(self, pose=None):
@@ -385,9 +431,22 @@ class MotionMatcher:
         qpos[7:] = pose["joints"]
         # Ground: blending leg angles moves the feet through or above the floor (measured +/-5 cm). Keep the
         # lowest foot point where the mocap frame has it (on the floor, or in the air while running).
-        qpos[2] -= self.db.ground.lowest(qpos) - self.db.lowest[self.frame]
+        fix = self.db.ground.lowest(qpos) - self.db.lowest[self.frame]
         qvel[:2], qvel[2] = rotate_2d(pose["velocity"], self.facing), pose["vertical_velocity"]
-        qvel[3:6] = self.db.angular_velocity[self.frame]
+        if SMOOTH_GROUND_FIX and self.ground_fix is not None:
+            if self.jumped:  # keep the applied fix where it was; the difference decays like the other offsets
+                self.ground_offset, self.ground_offset_rate = self.ground_fix - fix, 0.0
+            fix += self.ground_offset
+            qvel[2] -= (fix - self.ground_fix) / DT  # the fix moves the pelvis too
+        self.jumped = False
+        self.ground_fix = fix
+        qpos[2] -= fix
+        if INERTIALIZE_TILT_RATE:
+            # From the blended motion: turning about the vertical plus the tilt's rate, in the pelvis's own frame.
+            world = np.array([0.0, 0.0, pose["yaw_rate"]]) + yaw_rotation(self.facing).apply(pose["tilt_rate"])
+            qvel[3:6] = to_rotation(qpos[3:7]).inv().apply(world)
+        else:
+            qvel[3:6] = self.db.angular_velocity[self.frame]
         qvel[6:] = pose["joint_velocity"]
         return qpos, qvel
 

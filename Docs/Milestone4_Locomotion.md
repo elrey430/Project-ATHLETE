@@ -484,6 +484,48 @@ training episode length 721 → ~860). **ALL SIX M4 TESTS PASS with the chunk-55
   floor looks set by the commands and the reference rather than by the controller: next, check the
   reference itself at the fall moments (hard stops from a run while turning; is the motion-matched
   reference physically feasible there?), before more training.
+- **Reference feasibility check (2026-10-09, local).** Inverse dynamics on the reference (mj_inverse,
+  constraints off): the pelvis has no motor, so its 6 generalized forces are what the ground must supply.
+  "Friction need" = horizontal / vertical ground force with a foot down; above the model's 0.7 the feet
+  would slip: no body could follow that motion. (Centre-of-pressure and flight checks proved too sensitive
+  to modelling error, e.g. a clip and its mirror scored differently, so they were judged only relative to
+  the mocap.) 300 random-command episodes with run 12 chunk 5 in the Python Driver (18 falls):
+
+  | | Frames needing more grip than the feet have |
+  |---|---|
+  | Raw mocap clips (the matcher's source, 114k frames) | 0.36% |
+  | Matched reference, episodes without a fall | 1.6% |
+  | Matched reference, 3 s to 0.5 s before a fall | 7.6-9.3% |
+  | Matched reference, last 0.5 s | 13.6% |
+
+  Per 1.5 s: ordinary play 2.0 impossible frames and 3.6 matcher jumps; before falls 11.1 and 5.6. 78% of
+  the ordinary impossible frames, and 62% of those before falls, come within 0.15 s after a matcher jump
+  (36% expected by chance): the jump blend (inertialization, `BLEND_HALFLIFE_S` 0.1 s) creates
+  accelerations no human could produce, and near falls the matcher jumps more often. The heading clamp
+  (`MAX_REFERENCE_YAW_LEAD_RAD`) fires only once the athlete is already off balance (0 deg in ordinary
+  play; 24% of the pre-fall impossible frames): a consequence. Impossible frames are a risk factor, not
+  a certainty: 45% of ordinary 1.5 s stretches have at least one (and the athlete copes), 94% of the
+  stretches before falls do; at least 5: 19% vs 83%.
+  **Conclusion: the falls come largely from the reference the matcher builds, not the tracker.** Free
+  next steps: fewer and smoother jumps (`MIN_JUMP_INTERVAL_FRAMES`, `JUMP_MARGIN`, `BLEND_HALFLIFE_S`), or
+  limiting the reference's acceleration to what friction allows; measured with the same check and the
+  fall rate before any training.
+- **Matcher tuning (2026-10-09/10, local; open-loop screening on 60 random-command schedules, then falls).**
+  Impossible-grip frames of the matcher's output (current settings 1.87%): blend half-life 0.15 / 0.2 /
+  0.3 s: 1.92 / 2.00 / 2.85%, and the reference follows commands worse (speed error 0.085 -> 0.15 m/s,
+  turns and run speed off); jump hold 30 frames: 1.87% (jumps 2.32 -> 1.98/s); hold 30 + blend 0.2: 1.98%;
+  `JUMP_MARGIN` 3 + blend 0.2: 1.90%. 83% of the impossible frames are blend artefacts (the raw mocap
+  frame is fine: need 0.42 vs 0.88), half within 50 ms of a jump; the largest part of the force is the
+  pelvis's horizontal acceleration (72% of frames, median 0.56 body weight, ~4 frames after a jump: the
+  speed blend). Three fixes, behind switches in `motion_matching.py`: the pelvis tilt rate carried
+  through jumps (`INERTIALIZE_TILT_RATE`; stated angular velocity 10x more consistent) 1.94%; plus the
+  ground fix blended (`SMOOTH_GROUND_FIX`) 1.81%; a horizontal acceleration limit (`ACCEL_LIMIT_MPS2`
+  4 / 5 / 6) 1.51 / 1.54 / 1.56%, responsiveness unchanged. **Falls with the 5 m/s² limit, the same 300
+  episodes as the 18-fall baseline: 17**, and only 7 were the same episodes: the closed loop reshuffles
+  which episodes fall, and the total doesn't move. All three switches are off (output identical to
+  before, checked). Cutting the reference's impossible moments by a fifth doesn't reduce falls; the
+  tracker was trained on the current matcher's output, so a matcher change may only pay off with
+  training on it.
 
 ## 9.5 Open items for learned locomotion
 
